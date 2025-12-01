@@ -7,32 +7,24 @@ import { v4 as uuidv4 } from "uuid";
  * @param {Object} kioskSockets - shared kiosk object
  * @param {String} kioskId - required kiosk ID
  */
-export function handleKioskConnection(ws, kioskSockets, kioskId) {
-  if (!kioskId) {
+
+export function handleKioskConnection(ws, kioskId, kioskSockets) {
+  if (!kioskId || kioskSockets[kioskId] === undefined) {
     ws.send(JSON.stringify({ type: "error", data: "No kiosk id present" }));
     ws.close();
     return
   }
 
+  const inUseKiosk = kioskSockets[kioskId];
+
+
   console.log(`🖥️ Kiosk connected: ${kioskId}`);
 
-  // Ensure the kiosk entry exists
-  // if (!kioskSockets[kioskId]) {
-  //   kioskSockets[kioskId] = {
-  //     kioskid: kioskId,
-  //     kiosk: ws,
-  //     agent: null,
-  //     uuid: uuidv4(),
-  //     createdAt: new Date().toISOString(),
-  //   };
-  // } else {
-  //   kioskSockets[kioskId].kiosk = ws;
-  // }
 
-  // Notify kiosk to register
+  // Notify kiosk to register for first time
   ws.send(JSON.stringify({
-    type: "register-kiosk-request",
-    data: { kioskid: kioskId, serverStatus: "Active" }
+    type: "setting-reference-id-for-user-identification",
+    data: { referenceId: inUseKiosk.referenceId, serverStatus: true }
   }));
 
   // Listen for kiosk messages
@@ -46,6 +38,9 @@ export function handleKioskConnection(ws, kioskSockets, kioskId) {
 
         case "job-status":
           console.log(`📄 Status from kiosk ${kioskId}:`, msg.data);
+          break;
+        case "unique-user-id-setuped":
+          console.log(`📄Status from kiosk : unique-user-id-setuped:${msg.kioskStatus}: ${msg.kioskid}: ${msg.userUniqueReferenceId}`);
           break;
 
         default:

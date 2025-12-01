@@ -1,14 +1,14 @@
 const WebSocket = require("ws");
 const nativeResources = require("../resources.json");
 
-const SERVER_URL = `${nativeResources.SERVER_URL}?role=agent&kioskid=${nativeResources.kioksid}`;
+const SERVER_URL = `${nativeResources.socketMethod}://${nativeResources.SERVER_URL}?role=agent&kioskid=${nativeResources.kioksid}`;
 
 // Function to create a WebSocket client
 function createSocket() {
   const ws = new WebSocket(SERVER_URL);
 
   ws.on("open", () => {
-    console.log("✅ Connected to server");
+    console.log("Connected to server");
 
     ws.send(JSON.stringify({
       type: "should-start-kiosk",

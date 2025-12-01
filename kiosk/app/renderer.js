@@ -25,12 +25,14 @@ ipcRenderer.on("status", (event, msg) => {
   status.innerText = msg.text;
 
 })
-ipcRenderer.on("setMachineId", (event, obj) => {
-  console.log(obj.kioskid);
-  console.log(obj);
-
-  setQrCode(`http://10.152.208.202:3000/send-job/${obj.kioskid}`);
-  document.getElementById("kioskID").innerText = obj.kioskid
+ipcRenderer.on("SetQRCode", async (event, obj) => {
+  if (obj.img !== undefined) {
+    document.getElementById("imagetoshow").src = "https://cdn.dribbble.com/userupload/26582295/file/original-63bbdcbb56d15515935dc9c5b5b144d7.gif";
+  }
+  else {
+    await setQrCode(`${obj.url}/kisokRedirect?userSessionNumber=${obj.kioskid}`);
+    document.getElementById("kioskID").innerText = `${obj.url}/kisokRedirect?userSessionNumber=${obj.kioskid}`
+  }
 })
 
 

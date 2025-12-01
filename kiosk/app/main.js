@@ -8,7 +8,7 @@ const { log } = require("console");
 
 
 let win;
-let TEMPKIOSKID;
+let UniqueKisokIDForIndividual;
 let socket;
 
 // new BrowserWindow({
@@ -31,7 +31,7 @@ let socket;
 const RECONNECT_DELAY = 2000;
 
 function connectSocket() {
-  const SERVER_URL = `${kioskNativeResources.SERVER_URL}?role=kiosk&kioskid=${kioskNativeResources.kioksid}`;
+  const SERVER_URL = `${kioskNativeResources.socketMethod}://${kioskNativeResources.SERVER_URL}?role=kiosk&kioskid=${kioskNativeResources.kioksid}`;
   safeSend('status', { text: "Initializing connection with server..." });
   socket = new WebSocket(SERVER_URL);
 
@@ -58,24 +58,34 @@ function connectSocket() {
           // });
           break;
 
-        case "register-kiosk-request":
-          TEMPKIOSKID = data.tempkisokid;
-          // console.log("registration started");
-          win.webContents.send('status', {
-            serverStatus: data.serverStatus,
-            text: "Connecting to server..."
-          });
-          win.webContents.send('setMachineId', {
-            kioskid: data.kioskid
-          });
-          sendEvent("register-kiosk", {
-            kioskid: data.kioskid,
-            kioskStatus: "Active"
-          });
-          win.webContents.send('status', {
-            serverStatus: data.serverStatus,
-            text: "we are ready to go"
-          });
+        case "setting-reference-id-for-user-identification":
+          UniqueKisokIDForIndividual = data.referenceId;
+          setTimeout(() => {
+
+
+            console.log("UniqueKisokIDForIndividual started");
+
+            safeSend('status', {
+              serverStatus: data.serverStatus,
+              text: "Please scan the QR code to print your documents"
+            });
+            safeSend('SetQRCode', {
+              kioskid: UniqueKisokIDForIndividual,
+              url: `${kioskNativeResources.httpMethod}://${kioskNativeResources.AppURL}`
+            });
+            sendEvent("unique-user-id-setuped", {
+              kioskid: kioskNativeResources.kioksid,
+              userUniqueReferenceId: UniqueKisokIDForIndividual,
+              kioskStatus: true
+            });
+            console.log("UniqueKisokIDForIndividual done");
+
+          }, 1000);
+          break;
+        case "connected-to-user-successfully":
+          console.log("Connected to user successfully:", data);
+          safeSend('status', { text: `Thank you ${data.userName} for choosing us 😊` });
+          safeSend('SetQRCode', { img: true });
           break;
 
         default:
@@ -99,7 +109,7 @@ function connectSocket() {
 
 function sendEvent(type, data) {
   if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type, data }));
+    socket.send(JSON.stringify({ type, ...data }));
   }
 }
 
@@ -111,7 +121,7 @@ function createWindow() {
     // kiosk: true,       // fullscreen kiosk mode
     // frame: false,      // no window frame
     // alwaysOnTop: true,
-    autoHideMenuBar: true,
+    // autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -139,6 +149,7 @@ function safeSend(channel, data) {
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, data);
   }
+
 }
 
 // Send back job status updates

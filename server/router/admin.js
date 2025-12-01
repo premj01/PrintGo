@@ -1,7 +1,7 @@
 import express from "express";
 const router = express.Router();
 import { sendToAgent } from "../Handlers/agentHandler.js";
-import { kioskSockets } from "../server.js";
+import { kioskSockets, userSessionIdWithKioskId } from "../server.js";
 
 // Get all kiosks
 router.get("/kiosks", (req, res) => {
@@ -10,7 +10,7 @@ router.get("/kiosks", (req, res) => {
     connected: !!kioskSockets[id].kiosk,
     agentConnected: !!kioskSockets[id].agent
   }));
-  res.json({ success: true, kioskSockets });
+  res.json({ success: true, kioskSockets, userSessionIdWithKioskId });
 });
 
 // Send command to a kiosk

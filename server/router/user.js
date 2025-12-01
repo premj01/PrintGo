@@ -1,7 +1,10 @@
 import express from "express";
 const router = express.Router();
+import kisokRedirect from "../controllers/kisokRedirectHandle.js";
 
-// Example user route: get kiosk status
+router.post("/kisokRedirect", kisokRedirect);
+router.get("/kisokRedirect", kisokRedirect);
+
 router.get("/kiosks/:kioskId/status", (req, res) => {
   const { kioskId } = req.params;
   const kiosk = req.kioskSockets[kioskId];

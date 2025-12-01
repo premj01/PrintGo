@@ -2,21 +2,33 @@ import express from "express";
 import http from "http";
 import { WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
+import cors from "cors";
+
 
 import { handleKioskConnection } from "./Handlers/kioskHandler.js";
 import { handleAgentConnection } from "./Handlers/agentHandler.js";
 
 import adminRoutes from "./router/admin.js";
 import userRoutes from "./router/user.js";
+import authRoutes from "./router/auth.js";
+import uploadRoutes from "./router/upload.js";
+
+import corsOptions from "./configurations/cors.js";
 
 
 const app = express();
 const server = http.createServer(app);
 app.use(express.json());
+app.use(cors(corsOptions));
+
+app.use("/uploads", express.static("uploads"));
+app.use("/userdocs", uploadRoutes);
 
 const wss = new WebSocketServer({ server });
 
 export const kioskSockets = {}; // { kioskId: { kioskid, agent, kiosk, uuid, createdAt } }
+export const userSessionIdWithKioskId = {}; // { uuid : kioskId }
+export const userWithFiles = {}; // { uuid : {userId , files[]} }
 
 
 
@@ -30,9 +42,8 @@ function validateKioskId(kioskid) {
 
 wss.on("connection", (ws, req) => {
   const urlParams = new URLSearchParams(req.url.replace("/", ""));
-  const role = urlParams.get("role");
-  const kioskid = urlParams.get("kioskid");
-  console.log(urlParams);
+  const role = urlParams.get("role").trim();
+  const kioskid = urlParams.get("kioskid").trim();
 
 
   if (!role || !kioskid) {
@@ -56,14 +67,19 @@ wss.on("connection", (ws, req) => {
       kioskid,
       agent: null,
       kiosk: null,
-      uuid: `${uuidv4()}-${Date.now()}`,
+      referenceId: null,
       createdAt: new Date().toISOString(),
     };
   }
 
+
   // Step 3: Assign the socket and set up disconnection handling
   if (role === "kiosk") {
+    const uid = `${uuidv4()}-${Date.now()}`
     kioskSockets[kioskid].kiosk = ws;
+    kioskSockets[kioskid].referenceId = uid;
+    userSessionIdWithKioskId[uid] = kioskid;       //assign user session id with kiosk id
+
     console.log(`✅ Kiosk connected: ${kioskid}`);
     handleKioskConnection(ws, kioskid, kioskSockets);
 
@@ -71,6 +87,8 @@ wss.on("connection", (ws, req) => {
       console.log(`⚠️ Kiosk disconnected: ${kioskid}`);
       // Remove only the kiosk reference
       kioskSockets[kioskid].kiosk = null;
+      delete userSessionIdWithKioskId[kioskSockets[kioskid].referenceId];
+
 
       // Notify agent to restart kiosk if agent is connected
       if (kioskSockets[kioskid].agent) {
@@ -89,6 +107,7 @@ wss.on("connection", (ws, req) => {
     ws.on("close", () => {
       console.log(`⚠️ Agent disconnected for kiosk: ${kioskid}`);
       // Remove the entire kiosk object
+      delete userSessionIdWithKioskId[kioskSockets[kioskid].referenceId];
       delete kioskSockets[kioskid];
     });
 
@@ -104,6 +123,7 @@ wss.on("connection", (ws, req) => {
 //   next();
 // });
 
+app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/", userRoutes);
 
