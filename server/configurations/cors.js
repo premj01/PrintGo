@@ -1,7 +1,7 @@
 const corsOptions = {
   origin: [
     "http://localhost:5173",   // React app during development
-    "http://10.161.68.71:5173",
+    "http://10.95.191.202:5173",
 
   ],
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allowed HTTP methods

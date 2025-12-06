@@ -1,5 +1,5 @@
-import { type } from "os";
 import { v4 as uuidv4 } from "uuid";
+import { userSessionIdWithKioskId, userWithFiles } from "../server.js";
 
 /**
  * Handle new kiosk connection
@@ -32,6 +32,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
     try {
       const msg = JSON.parse(message.toString());
       switch (msg.type) {
+
         case "register-kiosk":
           console.log(`✅ Kiosk ${msg.data.kioskid} registered successfully.`);
           break;
@@ -39,9 +40,38 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
         case "job-status":
           console.log(`📄 Status from kiosk ${kioskId}:`, msg.data);
           break;
+
         case "unique-user-id-setuped":
           console.log(`📄Status from kiosk : unique-user-id-setuped:${msg.kioskStatus}: ${msg.kioskid}: ${msg.userUniqueReferenceId}`);
           break;
+
+        case "reset-user-session-id-kiosk": 
+          console.log("reset-user-id-uuid" , msg.msg);
+          let oldId = msg.oldId;
+          let newID = `${uuidv4()}-${Date.now()}`;
+
+          kioskSockets[kioskId].uuid = newID;
+          
+          if(userSessionIdWithKioskId[oldId] === kioskId)
+          {
+            delete userSessionIdWithKioskId.oldId;
+            userSessionIdWithKioskId[newID] = kioskId;
+            
+          }else{
+            if(Object.values(userSessionIdWithKioskId).includes(kioskId))
+              {
+                delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskId)];
+              }
+          }
+          if(userWithFiles[oldId] !== undefined)
+          {
+            delete userWithFiles.oldId;
+          }
+
+          ws.send(JSON.stringify({type : "setting-reference-id-for-user-identification" , data: {referenceId: newID}}))
+          break;
+
+        
 
         default:
           console.log(`❓ Unknown message type from kiosk ${kioskId}:`, msg);

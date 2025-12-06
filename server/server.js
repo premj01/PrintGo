@@ -75,6 +75,13 @@ wss.on("connection", (ws, req) => {
 
   // Step 3: Assign the socket and set up disconnection handling
   if (role === "kiosk") {
+
+
+    if(Object.values(userSessionIdWithKioskId).includes(kioskid))
+    {
+        delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskid)];
+    }
+
     const uid = `${uuidv4()}-${Date.now()}`
     kioskSockets[kioskid].kiosk = ws;
     kioskSockets[kioskid].referenceId = uid;
@@ -107,7 +114,8 @@ wss.on("connection", (ws, req) => {
     ws.on("close", () => {
       console.log(`⚠️ Agent disconnected for kiosk: ${kioskid}`);
       // Remove the entire kiosk object
-      delete userSessionIdWithKioskId[kioskSockets[kioskid].referenceId];
+      // if agent stopped then entire kiosk de-register 
+        delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskid)];
       delete kioskSockets[kioskid];
     });
 

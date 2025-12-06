@@ -11,6 +11,14 @@ let win;
 let UniqueKisokIDForIndividual;
 let socket;
 
+let videoURLs = {
+  success : "https://cdn.dribbble.com/userupload/26582295/file/original-63bbdcbb56d15515935dc9c5b5b144d7.gif" ,
+
+  loading_cat : path.join(__dirname , "assets/cat_wait_speaker.mp4")
+
+}
+
+
 // new BrowserWindow({
 //   title: "PrintGo : Easy Printing Solution..",
 //   width: 800,
@@ -71,7 +79,7 @@ function connectSocket() {
             });
             safeSend('SetQRCode', {
               kioskid: UniqueKisokIDForIndividual,
-              url: `${kioskNativeResources.httpMethod}://${kioskNativeResources.AppURL}`
+              url: `${kioskNativeResources.httpMethod}://${kioskNativeResources.AppURL}`,
             });
             sendEvent("unique-user-id-setuped", {
               kioskid: kioskNativeResources.kioksid,
@@ -98,6 +106,8 @@ function connectSocket() {
 
   socket.on("close", () => {
     console.log("❌ Disconnected from server");
+    UniqueKisokIDForIndividual = "";
+    socket = null;
     setTimeout(connectSocket, RECONNECT_DELAY);
   }
   );
@@ -108,8 +118,13 @@ function connectSocket() {
 }
 
 function sendEvent(type, data) {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type, ...data }));
+  try{
+
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type, ...data }));
+    }
+  }catch(err){
+    console.log(err);
   }
 }
 
@@ -145,6 +160,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
+
 function safeSend(channel, data) {
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, data);
@@ -166,6 +182,31 @@ function printPDF(filePath) {
       safeSend('status', { text: `Something Wrong Happened<br>${err}` });
       return err;
     });
+}
+ipcMain.on("reset-user-session-id-kiosk-local" , ()=>{
+   
+    resetUserIdKiosk("kiosk button")
+
+});
+
+// function which handle infinite resets of user session without causing crash
+const resetUserIdKiosk = (from="Unknown")=>{
+  try{
+  console.log("Renderer requested: Reset kiosk session ID " , from );
+
+  // setting id nullinitially ... it will also display no QR or support QR
+  safeSend('status', { text: "Resetting session... " , content : "clean-up-animation" });
+  safeSend("SetQRCode", { img: videoURLs.success }); // clear qrcode and set appropriate gif
+  let oldId = UniqueKisokIDForIndividual;
+  UniqueKisokIDForIndividual ="";
+  sendEvent("reset-user-session-id-kiosk", {
+      msg : ` ${from} please reset id `,
+      oldId :  oldId
+  });
+  // UI pn update kela 
+  }catch(err){
+    console.log(err);
+  }
 }
 
 // module.exports = { safeSend }
