@@ -54,7 +54,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
           
           if(userSessionIdWithKioskId[oldId] === kioskId)
           {
-            delete userSessionIdWithKioskId.oldId;
+            delete userSessionIdWithKioskId[oldId];
             userSessionIdWithKioskId[newID] = kioskId;
             
           }else{
@@ -62,10 +62,11 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
               {
                 delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskId)];
               }
+              userSessionIdWithKioskId[newID] = kioskId;
           }
           if(userWithFiles[oldId] !== undefined)
           {
-            delete userWithFiles.oldId;
+            delete userWithFiles[oldId];
           }
 
           ws.send(JSON.stringify({type : "setting-reference-id-for-user-identification" , data: {referenceId: newID}}))

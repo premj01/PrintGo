@@ -87,7 +87,7 @@ wss.on("connection", (ws, req) => {
     kioskSockets[kioskid].referenceId = uid;
     userSessionIdWithKioskId[uid] = kioskid;       //assign user session id with kiosk id
 
-    console.log(`✅ Kiosk connected: ${kioskid}`);
+    // console.log(`✅ Kiosk connected: ${kioskid}`);
     handleKioskConnection(ws, kioskid, kioskSockets);
 
     ws.on("close", () => {
@@ -108,7 +108,7 @@ wss.on("connection", (ws, req) => {
 
   } else if (role === "agent") {
     kioskSockets[kioskid].agent = ws;
-    console.log(`🧑‍💻 Agent connected for: ${kioskid}`);
+    // console.log(`🧑‍💻 Agent connected for: ${kioskid}`);
     handleAgentConnection(ws, kioskid, kioskSockets);
 
     ws.on("close", () => {

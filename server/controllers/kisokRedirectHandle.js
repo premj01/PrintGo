@@ -13,7 +13,6 @@ const kisokRedirect = (req, res) => {
 
   }
 
-  // res.send("<h1>success makes man perfect</h1>)
 
 }
 
