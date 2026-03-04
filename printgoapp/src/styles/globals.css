@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/* =====================================================================
+   Color Palette — Light + Dark modes
+   
+   To change colors, edit config/colors.ts and these :root/.dark blocks.
+   The ThemeContext toggles the .dark class on <html>, and CSS handles
+   the rest automatically via these custom properties.
+   ===================================================================== */
+
+:root {
+  /* Core surfaces */
+  --bg: #FFFDF6;
+  --fg: #1a1a2e;
+  --c-card: #FFFFFF;
+  --c-card-fg: #1a1a2e;
+  --c-popover: #FFFFFF;
+  --c-popover-fg: #1a1a2e;
+
+  /* Brand */
+  --c-primary: #A0C878;
+  --c-primary-fg: #FFFFFF;
+  --c-secondary: #FAF6E9;
+  --c-secondary-fg: #1a1a2e;
+  --c-accent: #DDEB9D;
+  --c-accent-fg: #1a1a2e;
+  --c-success: #A0C878;
+  --c-success-fg: #FFFFFF;
+
+  /* Utility */
+  --c-muted: #f1f5f9;
+  --c-muted-fg: #64748b;
+  --c-destructive: #ef4444;
+  --c-destructive-fg: #FFFFFF;
+
+  /* Borders */
+  --c-border: #e2e8f0;
+  --c-input: #e2e8f0;
+  --c-ring: #A0C878;
+
+  /* PrintGo custom */
+  --c-navbar: #d3e876;
+  --c-footer: #A0C878;
+  --c-surface: #FAF6E9;
+  --c-text-primary: #2D3748;
+  --c-text-light: #718096;
+}
+
+.dark {
+  /* Core surfaces */
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --c-card: #161b22;
+  --c-card-fg: #e6edf3;
+  --c-popover: #161b22;
+  --c-popover-fg: #e6edf3;
+
+  /* Brand (adjusted for dark) */
+  --c-primary: #7eb450;
+  --c-primary-fg: #0d1117;
+  --c-secondary: #1e242c;
+  --c-secondary-fg: #e6edf3;
+  --c-accent: #384e24;
+  --c-accent-fg: #DDEB9D;
+  --c-success: #7eb450;
+  --c-success-fg: #0d1117;
+
+  /* Utility */
+  --c-muted: #1e242c;
+  --c-muted-fg: #8b949e;
+  --c-destructive: #f85149;
+  --c-destructive-fg: #e6edf3;
+
+  /* Borders */
+  --c-border: #30363d;
+  --c-input: #30363d;
+  --c-ring: #7eb450;
+
+  /* PrintGo custom */
+  --c-navbar: #161b22;
+  --c-footer: #161b22;
+  --c-surface: #161b22;
+  --c-text-primary: #e6edf3;
+  --c-text-light: #8b949e;
+}
+
+/* ===== Tailwind v4 @theme — maps utility classes to our CSS vars ===== */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--c-card);
+  --color-card-foreground: var(--c-card-fg);
+  --color-popover: var(--c-popover);
+  --color-popover-foreground: var(--c-popover-fg);
+  --color-primary: var(--c-primary);
+  --color-primary-foreground: var(--c-primary-fg);
+  --color-secondary: var(--c-secondary);
+  --color-secondary-foreground: var(--c-secondary-fg);
+  --color-accent: var(--c-accent);
+  --color-accent-foreground: var(--c-accent-fg);
+  --color-success: var(--c-success);
+  --color-success-foreground: var(--c-success-fg);
+  --color-muted: var(--c-muted);
+  --color-muted-foreground: var(--c-muted-fg);
+  --color-destructive: var(--c-destructive);
+  --color-destructive-foreground: var(--c-destructive-fg);
+  --color-border: var(--c-border);
+  --color-input: var(--c-input);
+  --color-ring: var(--c-ring);
+  --color-navbar: var(--c-navbar);
+  --color-footer: var(--c-footer);
+  --color-surface: var(--c-surface);
+  --color-text-primary: var(--c-text-primary);
+  --color-text-light: var(--c-text-light);
+
+  /* Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* Animations */
+  --animate-fade-in: fade-in 0.5s ease-in-out;
+  --animate-slide-up: slide-up 0.4s ease-out;
+  --animate-slide-down: slide-down 0.3s ease-out;
+
+  @keyframes fade-in {
+    0% {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slide-up {
+    0% {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slide-down {
+    0% {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* ===== Base Styles ===== */
+@layer base {
+
+  *,
+  *::before,
+  *::after {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+}
