@@ -191,6 +191,7 @@ function createWindow() {
     // kiosk: true,       // fullscreen kiosk mode
     // frame: false,      // no window frame
     // alwaysOnTop: true,
+    
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
