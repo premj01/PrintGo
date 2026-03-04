@@ -1,5 +1,6 @@
 import "./App.css";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import RootLayout from "./Layouts/RootLayout";
 import { Home } from "./pages/Home";
 import Contact from "./pages/Contact";
 import LoginGoogle from "./pages/LoginGoogle";
@@ -10,16 +11,17 @@ import Upload from "./pages/Upload";
 const router = createBrowserRouter([
   {
     path: "/",
+    element: <RootLayout />,
     children: [
       { index: true, element: <Home /> },
       { path: "auth", element: <LoginGoogle /> },
       { path: "contact", element: <Contact /> },
+      { path: "upload", element: <Upload /> },
       { path: "*", element: <div>404 Not Found</div> },
     ],
   },
   { path: "/kisokRedirect", element: <KioskRedirect /> },
   { path: "/oauth-callback", element: <OAuthCallback /> },
-  { path: "/upload", element: <Upload /> },
 ]);
 
 function App() {

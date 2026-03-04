@@ -27,5 +27,12 @@ export default function OAuthCallback() {
       });
   }, []);
 
-  return <div>Loading...</div>;
+  return (
+    <div className="p-4 flex items-center justify-center min-h-[50vh] bg-theme-background">
+      <div className="text-center">
+        <h1 className="text-2xl font-bold mb-4 text-theme-text">Authenticating...</h1>
+        <p className="text-theme-textLight">Please wait.</p>
+      </div>
+    </div>
+  );
 }

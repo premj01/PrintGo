@@ -59,21 +59,21 @@ const Upload = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-tr from-purple-100 via-blue-50 to-teal-50 p-6">
-      <div className="w-full max-w-xl bg-white/80 backdrop-blur-lg rounded-3xl shadow-2xl p-8 space-y-8 transition-all duration-500 hover:shadow-xl hover:scale-[1.02]">
+    <div className="min-h-full flex items-center justify-center bg-gradient-to-tr from-secondary via-primary to-accent p-6">
+      <div className="w-full max-w-xl bg-primary/80 backdrop-blur-lg rounded-3xl shadow-2xl p-8 space-y-8 transition-all duration-500 hover:shadow-xl hover:scale-[1.02]">
         <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-success to-accent bg-clip-text text-transparent">
             Upload Your File
           </h1>
-          <p className="text-gray-500">Drag and drop your files here</p>
+          <p className="text-theme-textLight">Drag and drop your files here</p>
         </div>
 
         {/* Drag & Drop Zone */}
         <div
           className={`relative group border-3 ${
             dragOver
-              ? "border-blue-500 bg-blue-50"
-              : "border-dashed border-gray-300 hover:border-blue-400"
+              ? "border-success bg-secondary"
+              : "border-dashed border-theme-textLight hover:border-success"
           } rounded-2xl p-8 transition-all duration-300 ease-in-out transform cursor-pointer`}
           onDragOver={(e) => {
             e.preventDefault();
@@ -86,8 +86,8 @@ const Upload = () => {
           <div className="flex flex-col items-center space-y-4">
             <FiUploadCloud
               className={`text-7xl ${
-                dragOver ? "text-blue-500" : "text-gray-400"
-              } group-hover:text-blue-500 transition-colors duration-300 ${
+                dragOver ? "text-success" : "text-theme-textLight"
+              } group-hover:text-success transition-colors duration-300 ${
                 !file && "animate-bounce"
               }`}
             />
@@ -95,20 +95,20 @@ const Upload = () => {
             <div className="text-center space-y-2">
               {file ? (
                 <div className="flex items-center justify-center space-x-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                  <span className="text-lg font-medium text-gray-700">
+                  <div className="w-2 h-2 rounded-full bg-success"></div>
+                  <span className="text-lg font-medium text-theme-text">
                     {file.name}
                   </span>
                 </div>
               ) : (
                 <>
-                  <p className="text-lg font-medium text-gray-700">
+                  <p className="text-lg font-medium text-theme-text">
                     Drop your file here, or{" "}
-                    <span className="text-blue-500 hover:text-blue-600">
+                    <span className="text-success hover:text-accent">
                       browse
                     </span>
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-theme-textLight">
                     Support for any file type
                   </p>
                 </>
@@ -127,15 +127,15 @@ const Upload = () => {
         <button
           onClick={handleUpload}
           disabled={uploading || !file}
-          className={`w-full py-4 rounded-xl font-semibold text-white shadow-lg transition-all duration-300 ${
+          className={`w-full py-4 rounded-xl font-semibold text-theme-text shadow-lg transition-all duration-300 ${
             uploading || !file
-              ? "bg-gray-400 cursor-not-allowed opacity-50"
-              : "bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 hover:shadow-blue-200/50 hover:-translate-y-0.5"
+              ? "bg-theme-textLight cursor-not-allowed opacity-50"
+              : "bg-gradient-to-r from-success to-accent hover:from-accent hover:to-success hover:shadow-accent/50 hover:-translate-y-0.5"
           }`}
         >
           {uploading ? (
             <div className="flex items-center justify-center space-x-3">
-              <div className="w-5 h-5 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
+              <div className="w-5 h-5 border-3 border-theme-text border-t-transparent rounded-full animate-spin"></div>
               <span>Uploading...</span>
             </div>
           ) : (
@@ -147,10 +147,10 @@ const Upload = () => {
           <div
             className={`text-center p-4 rounded-lg ${
               message.includes("✅")
-                ? "bg-green-50 text-green-700"
+                ? "bg-success/20 text-success"
                 : message.includes("❌")
                 ? "bg-red-50 text-red-700"
-                : "bg-yellow-50 text-yellow-700"
+                : "bg-accent/20 text-accent"
             } transition-all duration-300 animate-fade-in`}
           >
             {message}

@@ -42,11 +42,11 @@ router.post("/google", async (req, res) => {
       "YOUR_APP_SECRET",
       { expiresIn: "1h" }
     );
-    console.log(user.email);
+    // console.log(user.email);
 
     res.json({ token: appToken, user: { email: user.email, name: user.name, picture: user.picture } });
   } catch (err) {
-    console.error(err);
+    // console.error(err);
     res.status(400).json({ error: "Google login failed" });
   }
 })

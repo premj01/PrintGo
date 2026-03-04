@@ -6,6 +6,20 @@ export default {
   ],
   theme: {
     extend: {
+      colors: {
+        primary: '#FFFDF6',
+        secondary: '#FAF6E9',
+        accent: '#DDEB9D',
+        success: '#A0C878',
+        theme: {
+          background: '#FFFDF6',
+          surface: '#FAF6E9',
+          text: '#2D3748',
+          textLight: '#718096',
+          navbar: '#DDEB9D',
+          footer: '#A0C878',
+        },
+      },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-in-out',
         'bounce': 'bounce 1s infinite',

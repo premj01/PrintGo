@@ -19,4 +19,8 @@ router.get("/kiosks/:kioskId/status", (req, res) => {
   });
 });
 
+router.get("/call-printer",async ()=>{
+
+})
+
 export default router;

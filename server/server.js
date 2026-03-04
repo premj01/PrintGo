@@ -28,9 +28,8 @@ const wss = new WebSocketServer({ server });
 
 export const kioskSockets = {}; // { kioskId: { kioskid, agent, kiosk, uuid, createdAt } }
 export const userSessionIdWithKioskId = {}; // { uuid : kioskId }
-export const userWithFiles = {}; // { uuid : {userId , files[]} }
-
-
+export const userWithFiles = {}; // { uuid : {userId , files[] , isFileOnKiosk} }
+export const allFiles = []; // array of file 
 
 console.log("WebSocket server ready");
 
@@ -77,9 +76,8 @@ wss.on("connection", (ws, req) => {
   if (role === "kiosk") {
 
 
-    if(Object.values(userSessionIdWithKioskId).includes(kioskid))
-    {
-        delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskid)];
+    if (Object.values(userSessionIdWithKioskId).includes(kioskid)) {
+      delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key => userSessionIdWithKioskId[key] === kioskid)];
     }
 
     const uid = `${uuidv4()}-${Date.now()}`
@@ -115,7 +113,7 @@ wss.on("connection", (ws, req) => {
       console.log(`⚠️ Agent disconnected for kiosk: ${kioskid}`);
       // Remove the entire kiosk object
       // if agent stopped then entire kiosk de-register 
-        delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskid)];
+      delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key => userSessionIdWithKioskId[key] === kioskid)];
       delete kioskSockets[kioskid];
     });
 

@@ -45,34 +45,37 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
           console.log(`📄Status from kiosk : unique-user-id-setuped:${msg.kioskStatus}: ${msg.kioskid}: ${msg.userUniqueReferenceId}`);
           break;
 
-        case "reset-user-session-id-kiosk": 
-          console.log("reset-user-id-uuid" , msg.msg);
+        case "reset-user-session-id-kiosk":
+          console.log("reset-user-id-uuid", msg.msg);
           let oldId = msg.oldId;
           let newID = `${uuidv4()}-${Date.now()}`;
 
           kioskSockets[kioskId].uuid = newID;
-          
-          if(userSessionIdWithKioskId[oldId] === kioskId)
-          {
+
+          if (userSessionIdWithKioskId[oldId] === kioskId) {
             delete userSessionIdWithKioskId[oldId];
             userSessionIdWithKioskId[newID] = kioskId;
-            
-          }else{
-            if(Object.values(userSessionIdWithKioskId).includes(kioskId))
-              {
-                delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key =>userSessionIdWithKioskId[key] === kioskId)];
-              }
-              userSessionIdWithKioskId[newID] = kioskId;
+
+          } else {
+            if (Object.values(userSessionIdWithKioskId).includes(kioskId)) {
+              delete userSessionIdWithKioskId[Object.keys(userSessionIdWithKioskId).find(key => userSessionIdWithKioskId[key] === kioskId)];
+            }
+            userSessionIdWithKioskId[newID] = kioskId;
           }
-          if(userWithFiles[oldId] !== undefined)
-          {
+          if (userWithFiles[oldId] !== undefined) {
             delete userWithFiles[oldId];
           }
 
-          ws.send(JSON.stringify({type : "setting-reference-id-for-user-identification" , data: {referenceId: newID}}))
+          ws.send(JSON.stringify({ type: "setting-reference-id-for-user-identification", data: { referenceId: newID } }))
           break;
 
-        
+        case "ack-of-file-from-kiosk":
+          if (msg.data.ack == true) {
+            // userWithFiles[msg.data.sessionId]?.isFileOnKiosk = true;
+            const user = userWithFiles[msg.data.sessionId];
+            if (user) user.isFileOnKiosk = true;
+          }
+          break;
 
         default:
           console.log(`❓ Unknown message type from kiosk ${kioskId}:`, msg);
@@ -112,6 +115,15 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
  */
 export function sendToKiosk(kioskSockets, kioskId, type, data = {}) {
   const kioskSocket = kioskSockets[kioskId]?.kiosk;
+  if (kioskSocket && kioskSocket.readyState === kioskSocket.OPEN) {
+    kioskSocket.send(JSON.stringify({ type, data }));
+    console.log(`📤 Sent "${type}" to kiosk ${kioskId}`);
+  } else {
+    console.log(`❌ Cannot send "${type}", kiosk ${kioskId} not connected`);
+  }
+}
+
+export function sendToKioskViaSocket(kioskSocket, type, data = {}) {
   if (kioskSocket && kioskSocket.readyState === kioskSocket.OPEN) {
     kioskSocket.send(JSON.stringify({ type, data }));
     console.log(`📤 Sent "${type}" to kiosk ${kioskId}`);
