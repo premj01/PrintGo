@@ -75,10 +75,10 @@ function connectSocket() {
 
                             console.log("Metadata received for:", data.fileName);
                         } else {
-                            console.log("Not : Metadata not received for:", data.fileName);
+                            console.log("No : Metadata not received for:", data.fileName);
                         }
                     } else {
-                        console.log("Not : Metadata not received for : Invalid Params");
+                        console.log("No : Metadata not received for : Invalid Params");
                     }
                     break;
 
