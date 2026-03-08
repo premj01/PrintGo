@@ -105,6 +105,8 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
     });
 }
 
+
+//kioskSockets  - all agent + kiosk info
 export function sendToKiosk(kioskSockets, kioskId, type, data = {}) {
     const kioskSocket = kioskSockets[kioskId]?.kiosk;
     if (kioskSocket && kioskSocket.readyState === kioskSocket.OPEN) {
@@ -114,7 +116,7 @@ export function sendToKiosk(kioskSockets, kioskId, type, data = {}) {
         console.log(`❌ Cannot send "${type}", kiosk ${kioskId} not connected`);
     }
 }
-
+// kioskSocket just a socket object of kiosk
 export function sendToKioskViaSocket(kioskSocket, type, data = {}) {
     if (kioskSocket && kioskSocket.readyState === kioskSocket.OPEN) {
         kioskSocket.send(JSON.stringify({ type, data }));
