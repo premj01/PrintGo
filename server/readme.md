@@ -1,9 +1,17 @@
-{
-"KIOSK001": {
-kioskid: "KIOSK001",
-agent: WebSocket, // agent socket ref
-kiosk: WebSocket, // kiosk socket ref
-uuid: "550e8400-e29b-41d4-a716-446655440000",
-createdAt: "2025-10-12T10:32:00.000Z"
-}
-}
+# server2
+
+This folder is a modularized copy of `server/`.
+
+- Native `server/` code is untouched.
+- Entry point: `server2/server.js`
+- Start command: `npm start`
+
+## Structure
+
+- `src/app` -> express app bootstrapping
+- `src/ws` -> websocket setup, validation, handlers
+- `src/modules` -> auth/admin/user/upload/system route modules
+- `src/state` -> shared runtime in-memory store
+- `src/config` -> CORS and file type config
+- `src/middleware` -> upload middleware
+- `src/services` -> utility services
