@@ -28,7 +28,7 @@ export function handleWebSocketConnection(ws, req) {
             kioskid,
             agent: null,
             kiosk: null,
-            referenceId: null,
+            userSessionUUID: null,
             createdAt: new Date().toISOString(),
         };
     }
@@ -43,7 +43,7 @@ export function handleWebSocketConnection(ws, req) {
 
         const uid = `${uuidv4()}-${Date.now()}`;
         kioskSockets[kioskid].kiosk = ws;
-        kioskSockets[kioskid].referenceId = uid;
+        kioskSockets[kioskid].userSessionUUID = uid;
         userSessionIdWithKioskId[uid] = kioskid;
 
         handleKioskConnection(ws, kioskid, kioskSockets);
@@ -52,7 +52,7 @@ export function handleWebSocketConnection(ws, req) {
             console.log(`⚠️ Kiosk disconnected: ${kioskid}`);
             if (kioskSockets[kioskid]) {
                 kioskSockets[kioskid].kiosk = null;
-                delete userSessionIdWithKioskId[kioskSockets[kioskid].referenceId];
+                delete userSessionIdWithKioskId[kioskSockets[kioskid].userSessionUUID];
 
                 if (kioskSockets[kioskid].agent) {
                     kioskSockets[kioskid].agent.send(

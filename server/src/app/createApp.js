@@ -11,5 +11,7 @@ export function createApp() {
     app.use("/uploads", express.static("uploads"));
 
     registerRoutes(app);
+
+
     return app;
 }

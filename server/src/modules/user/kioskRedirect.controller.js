@@ -1,4 +1,5 @@
 import { kioskSockets, userSessionIdWithKioskId } from "../../state/runtimeStore.js";
+import { sendToKioskViaSocket } from "../../ws/handlers/kiosk.handler.js";
 
 const kisokRedirect = (req, res) => {
 
@@ -8,10 +9,11 @@ const kisokRedirect = (req, res) => {
     const { userSessionNumber } = req.query;
 
     const kioskIdd = userSessionIdWithKioskId[userSessionNumber];
-    mykiosksocket = kioskSockets[kioskIdd]?.kiosk;
-    if (agentSocket && agentSocket.readyState === agentSocket.OPEN) {
+    const mykiosksocket = kioskSockets[kioskIdd]?.kiosk;
 
-    }
+    sendToKioskViaSocket(mykiosksocket, kioskIdd, "status-user-connected-to-kiosk", {
+        msg: "user has connected successfully"
+    })
 
 
 }
