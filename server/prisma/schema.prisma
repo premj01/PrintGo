@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NoAuthUser — anonymous print session (one per file upload)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model NoAuthUser {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Session & Kiosk identification
+  userSessionNumber String
+  kioskId           String
+
+  // File information
+  fileName String?
+
+  // Print configuration (JSON object)
+  // Expected shape:
+  // {
+  //   copies: 1,
+  //   printer: null,
+  //   orientation: "portrait",
+  //   paperSize: "A4",
+  //   sides: "one-sided",
+  //   pageRanges: null,
+  //   fitToPage: true,
+  //   colorMode: "color"
+  // }
+  fileConfig Json? @default("{}")
+
+  // UPI Payment transaction data
+  paymentStatus    String?   @default("pending") // pending | success | failed | refunded
+  transactionId    String?   @unique
+  paymentAmount    Float?
+  paymentMethod    String?   @default("UPI")
+  paymentTimestamp DateTime?
+  merchantOrderId  String?
+  payerVpa         String? // UPI VPA e.g. user@upi
+
+  // Print status tracking
+  printStatus String?   @default("pending") // pending | printing | success | failed
+  printedAt   DateTime?
+
+  @@index([userSessionNumber])
+  @@index([kioskId])
+  @@index([transactionId])
+}

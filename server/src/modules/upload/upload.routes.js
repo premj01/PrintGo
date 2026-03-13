@@ -4,6 +4,10 @@ import { userWithFiles, allFiles } from "../../state/runtimeStore.js";
 
 const router = express.Router();
 
+router.post("/upload-metadata", (req, res) => {
+    
+})
+
 router.post(
     "/upload",
     uploadMiddleware({ type: "array", fieldName: "file" }),

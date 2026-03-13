@@ -1,22 +1,97 @@
 import { v4 as uuidv4 } from "uuid";
 import { handleKioskConnection } from "./handlers/kiosk.handler.js";
 import { handleAgentConnection } from "./handlers/agent.handler.js";
+import { handleAdminConnection } from "./handlers/admin.handler.js";
 import { validateKioskId } from "./validators/validateKioskId.js";
-import { kioskSockets, userSessionIdWithKioskId } from "../state/runtimeStore.js";
+import { kioskSockets, userSessionIdWithKioskId, adminState, adminSockets } from "../state/runtimeStore.js";
+import jwt from "jsonwebtoken";
+import Admin from "../models/admin.model.js";
 
-export function handleWebSocketConnection(ws, req) {
+export async function handleWebSocketConnection(ws, req) {
     const urlParams = new URLSearchParams(req.url.replace("/", ""));
-    const role = urlParams.get("role").trim();
-    const kioskid = urlParams.get("kioskid").trim();
+    const role = urlParams.get("role")?.trim();
 
-    if (!role || !kioskid) {
-        console.log("Missing role or kioskid. Closing connection.");
-        ws.send(JSON.stringify({ event: "error", data: "Missing role or kioskid" }));
+    if (!role) {
+        console.log("Missing role. Closing connection.");
+        ws.send(JSON.stringify({ event: "error", data: "Missing role" }));
         ws.close();
         return;
     }
 
-    if (!validateKioskId(kioskid)) {
+    // ── Admin role (no kioskid required, single admin at a time) ──────────
+    if (role === "admin") {
+        const token = urlParams.get("token")?.trim();
+        if (!token) {
+            console.log("❌ Admin connection rejected: Missing token");
+            ws.send(JSON.stringify({ event: "error", data: "Authentication token required" }));
+            ws.close();
+            return;
+        }
+
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            const admin = await Admin.findById(decoded.id);
+
+            if (!admin || !admin.isActive) {
+                console.log("❌ Admin connection rejected: Admin not found or inactive");
+                ws.send(JSON.stringify({ event: "error", data: "Unauthorized or inactive account" }));
+                ws.close();
+                return;
+            }
+
+            // We no longer kick out old admins! Multiple are now supported.
+            const adminSessionId = uuidv4();
+
+            adminSockets[adminSessionId] = {
+                ws,
+                connectedAt: new Date().toISOString(),
+                adminInfo: { id: admin._id, username: admin.username, role: admin.role },
+                viewingKioskId: null
+            };
+
+            // Temporarily assign adminState as a fallback reference
+            adminState.ws = ws;
+            adminState.connectedAt = new Date().toISOString();
+            adminState.adminInfo = { id: admin._id, username: admin.username, role: admin.role };
+
+            handleAdminConnection(ws, adminSessionId);
+
+            ws.on("close", () => {
+                console.log(`⚠️ Admin disconnected: ${admin.username} (${adminSessionId})`);
+
+                // Release the kiosk lock if they had one
+                const viewingKioskId = adminSockets[adminSessionId]?.viewingKioskId;
+                if (viewingKioskId && kioskSockets[viewingKioskId] && kioskSockets[viewingKioskId].lockedByAdmin === adminSessionId) {
+                    kioskSockets[viewingKioskId].lockedByAdmin = null;
+                }
+
+                delete adminSockets[adminSessionId];
+
+                if (adminState.ws === ws) {
+                    adminState.ws = null;
+                    adminState.connectedAt = null;
+                    adminState.adminInfo = null;
+                }
+            });
+        } catch (err) {
+            console.log("❌ Admin connection rejected: Invalid token -", err.message);
+            ws.send(JSON.stringify({ event: "error", data: "Invalid authentication token" }));
+            ws.close();
+        }
+        return;
+    }
+
+    // ── Kiosk & Agent roles (kioskid required) ────────────────────────────
+    const kioskid = urlParams.get("kioskid")?.trim();
+
+    if (!kioskid) {
+        console.log("Missing kioskid. Closing connection.");
+        ws.send(JSON.stringify({ event: "error", data: "Missing kioskid" }));
+        ws.close();
+        return;
+    }
+
+    if (!(await validateKioskId(kioskid))) {
         console.log(`❌ Invalid kiosk ID: ${kioskid}`);
         ws.send(JSON.stringify({ event: "error", data: "Invalid kiosk ID" }));
         ws.close();

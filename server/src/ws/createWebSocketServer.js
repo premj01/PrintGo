@@ -6,7 +6,10 @@ export function createWebSocketServer(server) {
     console.log("WebSocket server ready");
 
     wss.on("connection", (ws, req) => {
-        handleWebSocketConnection(ws, req);
+        handleWebSocketConnection(ws, req).catch((err) => {
+            console.error("❌ Error in WebSocket connection handler:", err);
+            ws.close();
+        });
     });
 
     return wss;

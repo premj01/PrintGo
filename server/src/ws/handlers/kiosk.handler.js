@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
-import { userSessionIdWithKioskId, userWithFiles } from "../../state/runtimeStore.js";
-import test_file_sending_to_kiosk from "../testfilesend.js";
+import { userSessionIdWithKioskId, userWithFiles, adminSockets } from "../../state/runtimeStore.js";
+import Kiosk from "../../models/kiosk.model.js";
 
 export function handleKioskConnection(ws, kioskId, kioskSockets) {
     if (!kioskId || kioskSockets[kioskId] === undefined) {
@@ -87,15 +87,8 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     break;
                 }
 
-
-
                 case "testing-file-request-from-kiosk":
-
-                    // ----------temp block start----------
-                    setTimeout(() => {
-                        test_file_sending_to_kiosk();
-                    }, 5000)
-                    // ----------temp block end----------
+                    console.log("Testing file request received from kiosk");
                     break;
 
 
@@ -106,9 +99,54 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
 
                     break;
                 case "printed-status":  //success , error , halt , waiting etc. 
-                    // need to update database for perticular JWT user in database
-                    console.log(`Printer status: ${msg.status}`);
+                    console.log(`Printer status from ${kioskId}: ${msg.status}`);
 
+                    if (msg.status === "success") {
+                        const price = msg.data?.price || 0; // The agent could return computed price or we just count it
+                        Kiosk.findOneAndUpdate(
+                            { kioskId },
+                            {
+                                $inc: {
+                                    "metrics.totalPrintJobs": 1,
+                                    "metrics.revenue.total": price,
+                                    "metrics.revenue.monthly": price,
+                                    "metrics.revenue.daily": price
+                                }
+                            }
+                        ).catch(err => console.error("Error updating print metrics:", err.message));
+                    }
+
+                    // Forward to all admins
+                    Object.values(adminSockets).forEach(admin => {
+                        if (admin.ws && admin.ws.readyState === admin.ws.OPEN) {
+                            admin.ws.send(JSON.stringify({ type: "printed-status", kioskId, ...msg }));
+                        }
+                    });
+                    break;
+
+                case "printer-list-result":
+                case "kiosk-status-result":
+                    console.log(`🖨️ Printer/System info received from ${kioskId}`);
+                    if (msg.data?.printers) {
+                        const printersUpdate = {};
+                        if (Array.isArray(msg.data.printers)) {
+                            msg.data.printers.forEach((p, idx) => {
+                                if (idx === 0) printersUpdate["printers.bw.name"] = p.name || p;
+                                if (idx === 1) printersUpdate["printers.color.name"] = p.name || p;
+                            });
+                        }
+
+                        if (Object.keys(printersUpdate).length > 0) {
+                            Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(err => console.error(err));
+                        }
+                    }
+
+                    // Forward to all admins
+                    Object.values(adminSockets).forEach(admin => {
+                        if (admin.ws && admin.ws.readyState === admin.ws.OPEN) {
+                            admin.ws.send(JSON.stringify({ type: msg.type, kioskId, ...msg }));
+                        }
+                    });
                     break;
 
 

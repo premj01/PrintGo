@@ -4,7 +4,7 @@ import kioskRedirect from "./kioskRedirect.controller.js";
 const router = express.Router();
 
 router.post("/kisokRedirect", kioskRedirect);
-router.get("/kisokRedirect", kioskRedirect);
+// router.get("/kisokRedirect", kioskRedirect);
 
 router.get("/kiosks/:kioskId/status", (req, res) => {
     const { kioskId } = req.params;
