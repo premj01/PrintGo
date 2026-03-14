@@ -23,6 +23,16 @@ const kioskSchema = new mongoose.Schema({
 
     // ── Printers Configuration ───────────────────────────────────────────────
     printers: {
+        // Available printers list from kiosk (real-time)
+        availableList: [{
+            name: String,
+            isDefault: Boolean,
+            accepting: Boolean,
+            status: String,
+            // Keep raw capability values because some drivers return null/unknown.
+            supportsColor: { type: mongoose.Schema.Types.Mixed, default: null },
+            printMode: { type: String, default: "unknown" }
+        }],
         bw: {
             name: String,
             model: String,

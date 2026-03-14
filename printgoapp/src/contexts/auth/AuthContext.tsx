@@ -24,7 +24,7 @@ export const AuthContext = createContext<AuthContextType | undefined>(undefined)
 // ===== Provider =====
 interface AuthProviderProps {
     children: ReactNode;
-}
+}     
 
 export function AuthProvider({ children }: AuthProviderProps) {
     const [state, setState] = useState<AuthState>(initialState);

@@ -1,9 +1,17 @@
 // ===== Environment Configuration =====
 // Centralized config for all environment-dependent values
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+
+// Derive WebSocket URL from API URL (http→ws, https→wss)
+const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");
+
 export const ENV = {
-    // API base URL
-    API_BASE_URL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000",
+    // API base URL (e.g. http://localhost:3000)
+    API_BASE_URL,
+
+    // WebSocket base URL (e.g. ws://localhost:3000)
+    WS_BASE_URL,
 
     // Google OAuth
     GOOGLE_CLIENT_ID:

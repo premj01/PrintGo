@@ -5,6 +5,7 @@
  *  - Send printer commands to any kiosk (via printer/osmgt services)
  *  - Send agent commands to any kiosk (via agent service)
  *  - Open live PTY terminal sessions on kiosk machines
+ *  - Update kiosk data in the database
  *
  * Connection URL:  ws://host?role=admin
  *
@@ -12,7 +13,9 @@
  *   { type: "command-name", data: { kioskId: "KIOSK001", ... } }
  */
 
+import { v4 as uuidv4 } from "uuid";
 import { kioskSockets, adminSockets, terminalSessions } from "../../state/runtimeStore.js";
+import Kiosk from "../../models/kiosk.model.js";
 import {
     printFile,
     getPrinterStatus,
@@ -113,7 +116,8 @@ export function handleAdminConnection(ws, adminSessionId) {
             return;
         }
 
-        const kioskId = data?.kioskId;
+        // Accept both modern `data.kioskId` and legacy `targetKioskId` shapes.
+        const kioskId = data?.kioskId ?? msg?.targetKioskId;
 
         switch (type) {
 
@@ -134,6 +138,83 @@ export function handleAdminConnection(ws, adminSessionId) {
                     lockedBy: kioskSockets[id]?.lockedByAdmin ? (adminSockets[kioskSockets[id].lockedByAdmin]?.adminInfo?.username || "Another Admin") : null
                 }));
                 send(ws, "kiosk-list", { kiosks: list });
+                break;
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // ── Kiosk Database Update (via WebSocket) ─────────────────────
+            // ══════════════════════════════════════════════════════════════
+
+            case "update-kiosk-data": {
+                if (!requireField(kioskId, "kioskId", ws, "update-kiosk-data-result")) break;
+
+                const updateData = data?.data || {};
+                if (!updateData || Object.keys(updateData).length === 0) {
+                    send(ws, "update-kiosk-data-result", { success: false, message: "No update data provided", kioskId });
+                    break;
+                }
+
+                // Build the $set object properly for nested fields
+                const setObject = {};
+                for (const [key, value] of Object.entries(updateData)) {
+                    if (key === 'kioskId') continue; // Skip kioskId
+
+                    // Handle dot notation for nested fields (e.g., "printers.bw")
+                    if (typeof value === 'object' && value !== null && !key.includes('.')) {
+                        // For non-dot notation objects like { location: { region: ... } }
+                        // Flatten them to dot notation
+                        if (key === 'location' || key === 'printers' || key === 'machineDetails' || key === 'metrics' || key === 'config') {
+                            for (const [subKey, subValue] of Object.entries(value)) {
+                                setObject[`${key}.${subKey}`] = subValue;
+                            }
+                        } else {
+                            setObject[key] = value;
+                        }
+                    } else {
+                        // Already dot notation or primitive value
+                        setObject[key] = value;
+                    }
+                }
+
+                Kiosk.findOneAndUpdate(
+                    { kioskId },
+                    { $set: setObject },
+                    { new: true, runValidators: true }
+                ).lean().then(updatedKiosk => {
+                    if (!updatedKiosk) {
+                        send(ws, "update-kiosk-data-result", { success: false, message: "Kiosk not found", kioskId });
+                    } else {
+                        send(ws, "update-kiosk-data-result", { success: true, kiosk: updatedKiosk, kioskId });
+                    }
+                }).catch(err => {
+                    console.error(`Error updating kiosk ${kioskId}:`, err.message);
+                    send(ws, "update-kiosk-data-result", { success: false, message: err.message, kioskId });
+                });
+                break;
+            }
+
+            case "get-kiosk-data": {
+                if (!requireField(kioskId, "kioskId", ws, "get-kiosk-data-result")) break;
+
+                Kiosk.findOne({ kioskId }).lean().then(dbKiosk => {
+                    if (!dbKiosk) {
+                        send(ws, "get-kiosk-data-result", { success: false, message: "Kiosk not found", kioskId });
+                    } else {
+                        const socketStatus = (kioskId && kioskSockets[kioskId]) || { kiosk: null, agent: null };
+                        send(ws, "get-kiosk-data-result", {
+                            success: true,
+                            kiosk: {
+                                ...dbKiosk,
+                                liveConnected: !!socketStatus.kiosk,
+                                agentConnected: !!socketStatus.agent
+                            },
+                            kioskId
+                        });
+                    }
+                }).catch(err => {
+                    console.error(`Error getting kiosk ${kioskId}:`, err.message);
+                    send(ws, "get-kiosk-data-result", { success: false, message: err.message, kioskId });
+                });
                 break;
             }
 

@@ -125,26 +125,82 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     break;
 
                 case "printer-list-result":
+                case "printer-get-list-response-to-server":
                 case "kiosk-status-result":
                     console.log(`🖨️ Printer/System info received from ${kioskId}`);
-                    if (msg.data?.printers) {
-                        const printersUpdate = {};
-                        if (Array.isArray(msg.data.printers)) {
-                            msg.data.printers.forEach((p, idx) => {
-                                if (idx === 0) printersUpdate["printers.bw.name"] = p.name || p;
-                                if (idx === 1) printersUpdate["printers.color.name"] = p.name || p;
-                            });
-                        }
 
-                        if (Object.keys(printersUpdate).length > 0) {
-                            Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(err => console.error(err));
+                    // Accept both payload styles:
+                    // 1) { type, data: { printers: [...] } }
+                    // 2) { type, printers: [...] }
+                    const printers =
+                        (Array.isArray(msg.data?.printers) && msg.data.printers) ||
+                        (Array.isArray(msg.printers) && msg.printers) ||
+                        [];
+                    const colorPrinters = printers;
+                    // printers.filter((p) => p.supportsColor === true);
+                    const bwPrinters = printers;
+                    // printers.filter((p) => p.supportsColor === false);
+                    const unknownPrinters = printers;
+                    // printers.filter((p) => p.supportsColor == null);
+
+                    // Build update object with categorized printers
+                    const printersUpdate = {};
+
+                    // Store available printers for selection (keep as arrays for UI to display)
+                    printersUpdate["printers.availableList"] = printers.map((p) => ({
+                        name: p.name,
+                        isDefault: p.isDefault,
+                        accepting: p.accepting,
+                        status: p.status,
+                        supportsColor: p.supportsColor,
+                        printMode: p.printMode
+                    }));
+
+                    // Store first available color printer as default color printer
+                    if (colorPrinters.length > 0) {
+                        const firstColor = colorPrinters[0];
+                        printersUpdate["printers.color.name"] = firstColor.name;
+                        printersUpdate["printers.color.status"] = firstColor.status || "unknown";
+                    }
+
+                    // Store first available BW printer as default BW printer
+                    if (bwPrinters.length > 0) {
+                        const firstBw = bwPrinters[0];
+                        printersUpdate["printers.bw.name"] = firstBw.name;
+                        printersUpdate["printers.bw.status"] = firstBw.status || "unknown";
+                    }
+
+                    // If no categorized printers found but we have printers, use first two
+                    if (printers.length > 0 && colorPrinters.length === 0 && bwPrinters.length === 0) {
+                        if (printers[0]) {
+                            printersUpdate["printers.bw.name"] = printers[0].name;
+                            printersUpdate["printers.bw.status"] = printers[0].status || "unknown";
+                        }
+                        if (printers[1]) {
+                            printersUpdate["printers.color.name"] = printers[1].name;
+                            printersUpdate["printers.color.status"] = printers[1].status || "unknown";
                         }
                     }
 
-                    // Forward to all admins
+                    if (Object.keys(printersUpdate).length > 0) {
+                        Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(err => console.error(err));
+                    }
+
+                    // Forward to all admins with categorized data
                     Object.values(adminSockets).forEach(admin => {
                         if (admin.ws && admin.ws.readyState === admin.ws.OPEN) {
-                            admin.ws.send(JSON.stringify({ type: msg.type, kioskId, ...msg }));
+                            admin.ws.send(JSON.stringify({
+                                // Always forward printer inventory as a single canonical event.
+                                type: "printer-list-result",
+                                kioskId,
+                                data: {
+                                    ...msg.data,
+                                    printers,
+                                    colorPrinters,
+                                    bwPrinters,
+                                    unknownPrinters
+                                }
+                            }));
                         }
                     });
                     break;
