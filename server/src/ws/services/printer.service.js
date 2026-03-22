@@ -78,6 +78,38 @@ export function printFile(kioskId, options = {}) {
     return true;
 }
 
+// ─── Request S3 Download ────────────────────────────────────────────────────
+
+/**
+ * Ask kiosk to download a file from S3 before printing.
+ *
+ * @param {string} kioskId
+ * @param {object} options
+ * @param {string} options.fileKey
+ * @param {string} options.fileName
+ * @param {string} options.downloadUrl
+ * @param {string} options.sessionId
+ * @returns {boolean}
+ */
+export function requestKioskS3Download(kioskId, options = {}) {
+    const tag = "requestKioskS3Download";
+
+    if (!_kioskExists(kioskId, tag)) return false;
+    if (!_required(options.fileKey, "fileKey", tag)) return false;
+    if (!_required(options.fileName, "fileName", tag)) return false;
+    if (!_required(options.downloadUrl, "downloadUrl", tag)) return false;
+    if (!_required(options.sessionId, "sessionId", tag)) return false;
+
+    sendToKiosk(kioskSockets, kioskId, "download-file-from-s3-request", {
+        fileKey: options.fileKey,
+        fileName: options.fileName,
+        downloadUrl: options.downloadUrl,
+        sessionId: options.sessionId,
+    });
+
+    return true;
+}
+
 // ─── Printer Status ───────────────────────────────────────────────────────────
 
 /**

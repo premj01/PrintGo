@@ -5,6 +5,9 @@ import { RootLayout } from "@/components/layout";
 import HomePage from "@/pages/HomePage";
 import { LoginPage, OAuthCallbackPage } from "@/pages/auth";
 import UploadPage from "@/pages/UploadPage";
+import PreviewPage from "@/pages/PreviewPage";
+import PaymentPage from "@/pages/PaymentPage";
+import PrintingStatusPage from "@/pages/PrintingStatusPage";
 import ContactPage from "@/pages/ContactPage";
 import KioskRedirectPage from "@/pages/KioskRedirectPage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -41,12 +44,17 @@ export const router = createBrowserRouter([
             { index: true, element: <HomePage /> },
             { path: "auth", element: <LoginPage /> },
             { path: "upload", element: <UploadPage /> },
+            { path: "preview", element: <PreviewPage /> },
+            { path: "payment", element: <PaymentPage /> },
+            { path: "printing", element: <PrintingStatusPage /> },
             { path: "contact", element: <ContactPage /> },
+            { path: "error", element: <NotFoundPage /> },
             { path: "*", element: <NotFoundPage /> },
         ],
     },
     // Routes outside the main layout (no Navbar/Footer)
     { path: "/kioskRedirect", element: <KioskRedirectPage /> },
+    { path: "/kisokRedirect", element: <KioskRedirectPage /> },
     { path: "/oauth-callback", element: <OAuthCallbackPage /> },
 
     // Admin Routes

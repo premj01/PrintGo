@@ -1,6 +1,53 @@
 import { v4 as uuidv4 } from "uuid";
-import { userSessionIdWithKioskId, userWithFiles, adminSockets } from "../../state/runtimeStore.js";
+import fs from "fs";
+import path from "path";
+import {
+    userSessionIdWithKioskId,
+    userWithFiles,
+    adminSockets,
+    printJobStatusBySession,
+    pendingS3PrintJobs,
+    s3UploadRecords,
+} from "../../state/runtimeStore.js";
 import Kiosk from "../../models/kiosk.model.js";
+import send_file_to_kiosk from "./send_to_kiosk.js";
+import prisma from "../../config/prisma.js";
+
+function normalizePrinter(printer) {
+    if (typeof printer === "string") {
+        return {
+            name: printer,
+            isDefault: false,
+            accepting: true,
+            status: "unknown",
+            supportsColor: null,
+            printMode: "unknown"
+        };
+    }
+
+    return {
+        name: printer?.name || "",
+        isDefault: Boolean(printer?.isDefault),
+        accepting: printer?.accepting,
+        status: printer?.status || "unknown",
+        supportsColor: printer?.supportsColor ?? null,
+        printMode: printer?.printMode || "unknown"
+    };
+}
+
+function isColorPrinter(printer) {
+    const mode = String(printer?.printMode || "").toLowerCase();
+    if (["color", "colour"].includes(mode)) return true;
+    if (printer?.supportsColor === true) return true;
+    return false;
+}
+
+function isBwPrinter(printer) {
+    const mode = String(printer?.printMode || "").toLowerCase();
+    if (["bw", "b&w", "blackwhite", "mono", "monochrome", "grayscale", "greyscale"].includes(mode)) return true;
+    if (printer?.supportsColor === false) return true;
+    return false;
+}
 
 export function handleKioskConnection(ws, kioskId, kioskSockets) {
     if (!kioskId || kioskSockets[kioskId] === undefined) {
@@ -19,9 +66,12 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
         })
     );
 
-    ws.on("message", (message) => {
+    ws.on("message", async (message) => {
         try {
             const msg = JSON.parse(message.toString());
+            const sessionForKiosk = Object.keys(userSessionIdWithKioskId).find(
+                (key) => userSessionIdWithKioskId[key] === kioskId
+            );
             switch (msg.type) {
                 case "register-kiosk":
                     console.log(`✅ Kiosk ${msg.data.kioskid} registered successfully.`);
@@ -87,8 +137,174 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     break;
                 }
 
+                case "download-file-from-s3-ack": {
+                    const ackSessionId = msg.data?.sessionId || msg.sessionId;
+                    const success = Boolean(msg.data?.success);
+                    const fileKey = msg.data?.fileKey || null;
+                    const fileName = msg.data?.fileName || null;
+                    const error = msg.data?.error || null;
+
+                    if (!ackSessionId) {
+                        console.log("download-file-from-s3-ack received without sessionId");
+                        break;
+                    }
+
+                    Object.values(adminSockets).forEach(admin => {
+                        if (admin.ws && admin.ws.readyState === admin.ws.OPEN) {
+                            admin.ws.send(JSON.stringify({
+                                type: "download-file-from-s3-ack",
+                                kioskId,
+                                data: msg.data || {},
+                            }));
+                        }
+                    });
+
+                    const pendingJob = pendingS3PrintJobs[ackSessionId];
+
+                    if (!success) {
+                        if (pendingJob) {
+                            pendingS3PrintJobs[ackSessionId] = {
+                                ...pendingJob,
+                                downloadStatus: "failed",
+                                updatedAt: new Date().toISOString(),
+                            };
+                        }
+
+                        printJobStatusBySession[ackSessionId] = {
+                            status: "kiosk-download-failed",
+                            kioskId,
+                            fileKey,
+                            fileName,
+                            error,
+                            updatedAt: new Date().toISOString(),
+                        };
+
+                        // ── Prisma: UPDATE kioskDownloadStatus → "failed" ──
+                        try {
+                            await prisma.noAuthUser.updateMany({
+                                where: { userSessionNumber: ackSessionId },
+                                data: { kioskDownloadStatus: "failed" },
+                            });
+                            console.log(`⚠️ [Prisma] kioskDownloadStatus → failed for session: ${ackSessionId}`);
+                        } catch (dbErr) {
+                            console.error(`❌ [Prisma] Failed to update kioskDownloadStatus (fail): ${dbErr.message}`);
+                        }
+
+                        break;
+                    }
+
+                    if (pendingJob) {
+                        pendingS3PrintJobs[ackSessionId] = {
+                            ...pendingJob,
+                            downloadStatus: "success",
+                            downloadedFileName: fileName || pendingJob.fileName,
+                            updatedAt: new Date().toISOString(),
+                        };
+                    }
+
+                    printJobStatusBySession[ackSessionId] = {
+                        status: "kiosk-download-success",
+                        kioskId,
+                        fileKey,
+                        fileName,
+                        updatedAt: new Date().toISOString(),
+                    };
+
+                    // ── Prisma: UPDATE kioskDownloadStatus → "downloaded" ──
+                    try {
+                        await prisma.noAuthUser.updateMany({
+                            where: { userSessionNumber: ackSessionId },
+                            data: { kioskDownloadStatus: "downloaded" },
+                        });
+                        console.log(`✅ [Prisma] kioskDownloadStatus → downloaded for session: ${ackSessionId}`);
+                    } catch (dbErr) {
+                        console.error(`❌ [Prisma] Failed to update kioskDownloadStatus: ${dbErr.message}`);
+                    }
+
+                    const updatedPendingJob = pendingS3PrintJobs[ackSessionId];
+
+                    if (
+                        updatedPendingJob &&
+                        updatedPendingJob.kioskId === kioskId &&
+                        updatedPendingJob.paymentConfirmed
+                    ) {
+                        const printPayload = {
+                            fileName: updatedPendingJob.downloadedFileName || updatedPendingJob.fileName,
+                            sessionId: updatedPendingJob.sessionId,
+                            copies: updatedPendingJob.printOptions?.copies ?? 1,
+                            printer: updatedPendingJob.printOptions?.printer ?? null,
+                            orientation: updatedPendingJob.printOptions?.orientation ?? "portrait",
+                            paperSize: updatedPendingJob.printOptions?.paperSize ?? "A4",
+                            sides: updatedPendingJob.printOptions?.sides ?? "one-sided",
+                            pageRanges: updatedPendingJob.printOptions?.pageRanges ?? null,
+                            fitToPage: updatedPendingJob.printOptions?.fitToPage ?? true,
+                            colorMode: updatedPendingJob.printOptions?.colorMode ?? "monochrome",
+                        };
+
+                        sendToKiosk(kioskSockets, kioskId, "print-file-request-from-user-via-server", printPayload);
+
+                        if (updatedPendingJob.fileKey && s3UploadRecords[updatedPendingJob.fileKey]) {
+                            s3UploadRecords[updatedPendingJob.fileKey].status = "printing";
+                        }
+
+                        printJobStatusBySession[ackSessionId] = {
+                            status: "print-requested",
+                            kioskId,
+                            fileKey: updatedPendingJob.fileKey,
+                            fileName: updatedPendingJob.downloadedFileName || updatedPendingJob.fileName,
+                            updatedAt: new Date().toISOString(),
+                        };
+
+                        delete pendingS3PrintJobs[ackSessionId];
+                    } else if (updatedPendingJob && !updatedPendingJob.paymentConfirmed) {
+                        printJobStatusBySession[ackSessionId] = {
+                            status: "kiosk-file-ready-awaiting-payment",
+                            kioskId,
+                            fileKey: updatedPendingJob.fileKey,
+                            fileName: updatedPendingJob.downloadedFileName || updatedPendingJob.fileName,
+                            updatedAt: new Date().toISOString(),
+                        };
+                    }
+                    break;
+                }
+
                 case "testing-file-request-from-kiosk":
                     console.log("Testing file request received from kiosk");
+                    {
+                        const testFilePath = path.join(process.cwd(), "uploads", "cdpr.pdf");
+                        const targetKioskSocket = kioskSockets[kioskId]?.kiosk;
+                        const activeSessionId =
+                            kioskSockets[kioskId]?.userSessionUUID ||
+                            sessionForKiosk ||
+                            msg.data?.sessionId;
+
+                        if (!targetKioskSocket) {
+                            console.log(`❌ Cannot run test send: kiosk socket not connected for ${kioskId}`);
+                            break;
+                        }
+
+                        if (!activeSessionId) {
+                            console.log(`❌ Cannot run test send: no active session UUID for ${kioskId}`);
+                            break;
+                        }
+
+                        if (!fs.existsSync(testFilePath)) {
+                            console.log(`❌ Cannot run test send: file not found at ${testFilePath}`);
+                            break;
+                        }
+
+                        send_file_to_kiosk({
+                            kioskId,
+                            kiosk: targetKioskSocket,
+                            sessionId: activeSessionId,
+                            fileDetails: {
+                                userName: "PrintGo Test User",
+                                fileName: "cdpr.pdf",
+                                mail: null,
+                                filePath: testFilePath,
+                            },
+                        });
+                    }
                     break;
 
 
@@ -96,13 +312,74 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                 case "printing-started":
                     console.log(`printing started : ${msg.status}`);
 
+                    if (sessionForKiosk) {
+                        printJobStatusBySession[sessionForKiosk] = {
+                            ...(printJobStatusBySession[sessionForKiosk] || {}),
+                            status: "printing-started",
+                            kioskId,
+                            details: msg.data || null,
+                            updatedAt: new Date().toISOString(),
+                        };
+                    }
+
 
                     break;
+                case "print-file-response-to-server": {
+                    const sessionId = msg.sessionId || msg.data?.sessionId || sessionForKiosk;
+                    if (sessionId) {
+                        const printSuccess = Boolean(msg.success);
+                        printJobStatusBySession[sessionId] = {
+                            ...(printJobStatusBySession[sessionId] || {}),
+                            status: printSuccess ? "print-completed" : "print-failed",
+                            kioskId,
+                            details: msg,
+                            updatedAt: new Date().toISOString(),
+                        };
+
+                        // ── Prisma: UPDATE isPrinted flag ──
+                        try {
+                            await prisma.noAuthUser.updateMany({
+                                where: { userSessionNumber: sessionId },
+                                data: {
+                                    isPrinted: printSuccess,
+                                    printStatus: printSuccess ? "success" : "failed",
+                                    printedAt: printSuccess ? new Date() : null,
+                                },
+                            });
+                            console.log(`✅ [Prisma] isPrinted → ${printSuccess}, printStatus → ${printSuccess ? "success" : "failed"} for session: ${sessionId}`);
+                        } catch (dbErr) {
+                            console.error(`❌ [Prisma] Failed to update isPrinted: ${dbErr.message}`);
+                        }
+                    }
+                    break;
+                }
+                case "printer-status-response-to-server": {
+                    if (sessionForKiosk) {
+                        printJobStatusBySession[sessionForKiosk] = {
+                            ...(printJobStatusBySession[sessionForKiosk] || {}),
+                            status: "printer-status",
+                            kioskId,
+                            printer: msg.data || msg,
+                            updatedAt: new Date().toISOString(),
+                        };
+                    }
+                    break;
+                }
                 case "printed-status":  //success , error , halt , waiting etc. 
                     console.log(`Printer status from ${kioskId}: ${msg.status}`);
 
+                    if (sessionForKiosk) {
+                        printJobStatusBySession[sessionForKiosk] = {
+                            ...(printJobStatusBySession[sessionForKiosk] || {}),
+                            status: msg.status || "printed-status",
+                            kioskId,
+                            details: msg.data || null,
+                            updatedAt: new Date().toISOString(),
+                        };
+                    }
+
                     if (msg.status === "success") {
-                        const price = msg.data?.price || 0; // The agent could return computed price or we just count it
+                        const price = msg.data?.price || 0;
                         Kiosk.findOneAndUpdate(
                             { kioskId },
                             {
@@ -114,6 +391,23 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                                 }
                             }
                         ).catch(err => console.error("Error updating print metrics:", err.message));
+
+                        // ── Prisma: UPDATE isPrinted → true on printed-status success ──
+                        if (sessionForKiosk) {
+                            try {
+                                await prisma.noAuthUser.updateMany({
+                                    where: { userSessionNumber: sessionForKiosk },
+                                    data: {
+                                        isPrinted: true,
+                                        printStatus: "success",
+                                        printedAt: new Date(),
+                                    },
+                                });
+                                console.log(`✅ [Prisma] isPrinted → true (printed-status success) for session: ${sessionForKiosk}`);
+                            } catch (dbErr) {
+                                console.error(`❌ [Prisma] isPrinted update failed (printed-status): ${dbErr.message}`);
+                            }
+                        }
                     }
 
                     // Forward to all admins
@@ -136,18 +430,16 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         (Array.isArray(msg.data?.printers) && msg.data.printers) ||
                         (Array.isArray(msg.printers) && msg.printers) ||
                         [];
-                    const colorPrinters = printers;
-                    // printers.filter((p) => p.supportsColor === true);
-                    const bwPrinters = printers;
-                    // printers.filter((p) => p.supportsColor === false);
-                    const unknownPrinters = printers;
-                    // printers.filter((p) => p.supportsColor == null);
+                    const normalizedPrinters = printers.map(normalizePrinter).filter((p) => p.name);
+                    const colorPrinters = normalizedPrinters.filter(isColorPrinter);
+                    const bwPrinters = normalizedPrinters.filter(isBwPrinter);
+                    const unknownPrinters = normalizedPrinters.filter((p) => !isColorPrinter(p) && !isBwPrinter(p));
 
                     // Build update object with categorized printers
                     const printersUpdate = {};
 
                     // Store available printers for selection (keep as arrays for UI to display)
-                    printersUpdate["printers.availableList"] = printers.map((p) => ({
+                    printersUpdate["printers.availableList"] = normalizedPrinters.map((p) => ({
                         name: p.name,
                         isDefault: p.isDefault,
                         accepting: p.accepting,
@@ -156,30 +448,20 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         printMode: p.printMode
                     }));
 
-                    // Store first available color printer as default color printer
-                    if (colorPrinters.length > 0) {
-                        const firstColor = colorPrinters[0];
-                        printersUpdate["printers.color.name"] = firstColor.name;
-                        printersUpdate["printers.color.status"] = firstColor.status || "unknown";
+                    const defaultPrinter = normalizedPrinters.find((p) => p.isDefault);
+                    const selectedBw = bwPrinters.find((p) => p.isDefault) || defaultPrinter || bwPrinters[0] || normalizedPrinters[0];
+                    const selectedColor = colorPrinters.find((p) => p.isDefault) || defaultPrinter || colorPrinters[0] || normalizedPrinters[0];
+
+                    if (selectedBw) {
+                        printersUpdate["printers.bw.name"] = selectedBw.name;
+                        printersUpdate["printers.bw.model"] = selectedBw.name;
+                        printersUpdate["printers.bw.status"] = selectedBw.status || "unknown";
                     }
 
-                    // Store first available BW printer as default BW printer
-                    if (bwPrinters.length > 0) {
-                        const firstBw = bwPrinters[0];
-                        printersUpdate["printers.bw.name"] = firstBw.name;
-                        printersUpdate["printers.bw.status"] = firstBw.status || "unknown";
-                    }
-
-                    // If no categorized printers found but we have printers, use first two
-                    if (printers.length > 0 && colorPrinters.length === 0 && bwPrinters.length === 0) {
-                        if (printers[0]) {
-                            printersUpdate["printers.bw.name"] = printers[0].name;
-                            printersUpdate["printers.bw.status"] = printers[0].status || "unknown";
-                        }
-                        if (printers[1]) {
-                            printersUpdate["printers.color.name"] = printers[1].name;
-                            printersUpdate["printers.color.status"] = printers[1].status || "unknown";
-                        }
+                    if (selectedColor) {
+                        printersUpdate["printers.color.name"] = selectedColor.name;
+                        printersUpdate["printers.color.model"] = selectedColor.name;
+                        printersUpdate["printers.color.status"] = selectedColor.status || "unknown";
                     }
 
                     if (Object.keys(printersUpdate).length > 0) {
@@ -195,7 +477,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                                 kioskId,
                                 data: {
                                     ...msg.data,
-                                    printers,
+                                    printers: normalizedPrinters,
                                     colorPrinters,
                                     bwPrinters,
                                     unknownPrinters

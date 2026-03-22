@@ -2,8 +2,17 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertTriangle, Home } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export default function NotFoundPage() {
+    const [message, setMessage] = useState("Page not found");
+    useEffect(() => {
+        const errormessage = localStorage.getItem("errormessage");
+        if (errormessage) {
+            setMessage(errormessage);
+            localStorage.removeItem("errormessage");
+        }
+    }, []);
     return (
         <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center bg-background px-4">
             <Card className="w-full max-w-md animate-fade-in text-center">
@@ -14,7 +23,7 @@ export default function NotFoundPage() {
                     <div>
                         <h1 className="text-5xl font-extrabold text-foreground">404</h1>
                         <p className="mt-2 text-lg text-muted-foreground">
-                            Page not found
+                            {message}
                         </p>
                     </div>
                     <Button asChild variant="default" className="bg-success text-white hover:bg-success/90">

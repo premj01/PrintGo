@@ -3,6 +3,7 @@ import kioskRedirect from "./kioskRedirect.controller.js";
 
 const router = express.Router();
 
+router.post("/kioskRedirect", kioskRedirect);
 router.post("/kisokRedirect", kioskRedirect);
 // router.get("/kisokRedirect", kioskRedirect);
 

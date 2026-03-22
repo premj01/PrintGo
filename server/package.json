@@ -8,19 +8,21 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1010.0",
+    "@aws-sdk/s3-request-presigner": "^3.1010.0",
+    "@prisma/client": "^6.19.2",
     "axios": "^1.12.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.3.0",
-    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
     "uuid": "^13.0.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
-    "@prisma/client": "^6.19.2",
-    "dotenv": "^17.3.1",
     "prisma": "^6.19.2"
   }
 }

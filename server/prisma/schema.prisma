@@ -24,6 +24,10 @@ model NoAuthUser {
   // File information
   fileName String?
 
+  // File lifecycle tracking
+  s3UploadStatus      String? @default("pending")   // pending | uploaded | failed
+  kioskDownloadStatus String? @default("pending")    // pending | requested | downloading | downloaded | failed
+
   // Print configuration (JSON object)
   // Expected shape:
   // {
@@ -48,8 +52,10 @@ model NoAuthUser {
   payerVpa         String? // UPI VPA e.g. user@upi
 
   // Print status tracking
-  printStatus String?   @default("pending") // pending | printing | success | failed
-  printedAt   DateTime?
+  printStatus    String?   @default("pending") // pending | printing | success | failed
+  isPrintStarted Boolean   @default(false)     // true when print command dispatched after payment
+  isPrinted      Boolean   @default(false)     // true when kiosk confirms print completed
+  printedAt      DateTime?
 
   @@index([userSessionNumber])
   @@index([kioskId])

@@ -9,4 +9,13 @@ export const adminState = { ws: null, connectedAt: null }; // Keeping as fallbac
 // { sessionId: { kioskId } }
 export const terminalSessions = {};
 
+// { sessionId: { status, kioskId, updatedAt, ...details } }
+export const printJobStatusBySession = {};
+
+// { fileKey: { fileKey, sessionId, kioskId, fileName, contentType, size, metadata, status, createdAt, uploadedAt } }
+export const s3UploadRecords = {};
+
+// { sessionId: { kioskId, fileKey, fileName, printOptions, createdAt } }
+export const pendingS3PrintJobs = {};
+
 // remember only one file will be comming from frontend...all files must contain metadata to remove unused files regulary so we can make it more cleaner approach 

@@ -1,8 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useKioskSession } from "@/hooks";
+import { STORAGE_KEYS } from "@/config/constants";
+import { kioskPrintService } from "@/services";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, Printer } from "lucide-react";
+
+const inflightKioskAuthSessions = new Set<string>();
 
 /**
  * KioskRedirectPage
@@ -17,18 +21,82 @@ export default function KioskRedirectPage() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const { setSessionNumber } = useKioskSession();
+    const [statusText, setStatusText] = useState("Connecting to your kiosk...");
 
     useEffect(() => {
-        const sessionNumber = searchParams.get("userSessionNumber");
-        if (sessionNumber) {
-            setSessionNumber(sessionNumber);
-        }
+        let isCancelled = false;
 
-        const timer = setTimeout(() => {
-            navigate("/upload", { replace: true });
-        }, 2000);
+        const authenticate = async () => {
+            const sessionNumber =
+                searchParams.get("userSessionNumber") ??
+                searchParams.get("userSessionUUID");
 
-        return () => clearTimeout(timer);
+            if (!sessionNumber) {
+                setStatusText("Missing kiosk session. Redirecting...");
+                navigate("/", { replace: true });
+                return;
+            }
+
+            // const existingToken = localStorage.getItem(STORAGE_KEYS.TOKEN);
+            // const existingAuthedSession = localStorage.getItem(STORAGE_KEYS.KIOSK_AUTH_SESSION);
+
+            // if (existingAuthedSession === sessionNumber) {
+            //     setSessionNumber(sessionNumber);
+            //     setStatusText("Session already verified. Opening upload page...");
+            //     navigate("/upload", { replace: true });
+            //     return;
+            // }
+
+            if (inflightKioskAuthSessions.has(sessionNumber)) {
+                setStatusText("Verifying kiosk session...");
+                return;
+            }
+
+            try {
+                inflightKioskAuthSessions.add(sessionNumber);
+                setStatusText("Verifying kiosk session...");
+                setSessionNumber(sessionNumber);
+                const response = await kioskPrintService.authenticateKioskSession(sessionNumber);
+
+                if (isCancelled) {
+                    return;
+                }
+
+                setStatusText("Connected. Opening upload page...");
+                localStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
+                localStorage.setItem(STORAGE_KEYS.KIOSK_AUTH_SESSION, sessionNumber);
+
+                window.setTimeout(() => {
+                    if (!isCancelled) {
+                        navigate("/upload", { replace: true });
+                    }
+                }, 600);
+            } catch (error) {
+                console.error("Kiosk authentication failed:", error);
+
+                if (isCancelled) {
+                    return;
+                }
+
+                setStatusText("Unable to connect. Redirecting...");
+                window.setTimeout(() => {
+                    if (!isCancelled) {
+                        navigate("/", { replace: true });
+                    }
+                }, 1000);
+            } finally {
+                inflightKioskAuthSessions.delete(sessionNumber);
+            }
+        };
+
+        const timerId = window.setTimeout(() => {
+            authenticate();
+        }, 250);
+
+        return () => {
+            isCancelled = true;
+            window.clearTimeout(timerId);
+        };
     }, [searchParams, navigate, setSessionNumber]);
 
     return (
@@ -44,7 +112,7 @@ export default function KioskRedirectPage() {
                     <div>
                         <h1 className="text-xl font-semibold text-foreground">Welcome</h1>
                         <p className="mt-1 text-sm text-muted-foreground">
-                            Connecting to your kiosk...
+                            {statusText}
                         </p>
                     </div>
                 </CardContent>

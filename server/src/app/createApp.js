@@ -8,7 +8,6 @@ export function createApp() {
 
     app.use(express.json());
     app.use(cors(corsOptions));
-    app.use("/uploads", express.static("uploads"));
 
     registerRoutes(app);
 

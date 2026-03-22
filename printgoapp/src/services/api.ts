@@ -12,6 +12,12 @@ const api = axios.create({
     withCredentials: true,
 });
 
+
+// api.interceptors.request.use(
+//     (config)=>{
+//     const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
+//     return config;
+// } , (err)=>Promise.reject(err));
 // Request interceptor: attach JWT token if present
 api.interceptors.request.use(
     (config) => {
@@ -32,7 +38,10 @@ api.interceptors.response.use(
             // Token expired or invalid — clear auth state
             localStorage.removeItem(STORAGE_KEYS.TOKEN);
             localStorage.removeItem(STORAGE_KEYS.USER);
+            localStorage.setItem("errormessage", error.response?.data?.message || "Something is Wrong!!! Session expired!!");
             // Optionally redirect to login
+            console.log("error", error.response);
+            window.location.href = "/error";
         }
         return Promise.reject(error);
     }

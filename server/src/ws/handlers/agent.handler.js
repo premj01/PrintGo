@@ -10,6 +10,65 @@
 import { kioskSockets, adminSockets, terminalSessions } from "../../state/runtimeStore.js";
 import Kiosk from "../../models/kiosk.model.js";
 
+function normalizePrinter(printer) {
+    if (typeof printer === "string") {
+        return {
+            name: printer,
+            isDefault: false,
+            status: "unknown",
+            supportsColor: null,
+            printMode: "unknown"
+        };
+    }
+
+    return {
+        name: printer?.name || "",
+        isDefault: Boolean(printer?.isDefault),
+        status: printer?.status || "unknown",
+        supportsColor: printer?.supportsColor ?? null,
+        printMode: printer?.printMode || "unknown"
+    };
+}
+
+function isColorPrinter(printer) {
+    const mode = String(printer?.printMode || "").toLowerCase();
+    if (["color", "colour"].includes(mode)) return true;
+    if (printer?.supportsColor === true) return true;
+    return false;
+}
+
+function isBwPrinter(printer) {
+    const mode = String(printer?.printMode || "").toLowerCase();
+    if (["bw", "b&w", "blackwhite", "mono", "monochrome", "grayscale", "greyscale"].includes(mode)) return true;
+    if (printer?.supportsColor === false) return true;
+    return false;
+}
+
+function buildPrinterDefaultsUpdate(printers) {
+    const normalized = printers.map(normalizePrinter).filter((p) => p.name);
+    if (normalized.length === 0) return {};
+
+    const colorPrinters = normalized.filter(isColorPrinter);
+    const bwPrinters = normalized.filter(isBwPrinter);
+    const defaultPrinter = normalized.find((p) => p.isDefault);
+
+    const selectedBw = bwPrinters.find((p) => p.isDefault) || defaultPrinter || bwPrinters[0] || normalized[0];
+    const selectedColor = colorPrinters.find((p) => p.isDefault) || defaultPrinter || colorPrinters[0] || normalized[0];
+
+    const update = { "printers.availableList": normalized };
+    if (selectedBw) {
+        update["printers.bw.name"] = selectedBw.name;
+        update["printers.bw.model"] = selectedBw.name;
+        update["printers.bw.status"] = selectedBw.status || "unknown";
+    }
+    if (selectedColor) {
+        update["printers.color.name"] = selectedColor.name;
+        update["printers.color.model"] = selectedColor.name;
+        update["printers.color.status"] = selectedColor.status || "unknown";
+    }
+    return update;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Send typed JSON to all connected admin dashboards. */
@@ -115,13 +174,9 @@ export function handleAgentConnection(ws, kioskId, sockets) {
 
                 // If the agent sends back printer information or hardware specs, update DB:
                 if (data?.printers) {
-                    const printersUpdate = {};
-                    if (Array.isArray(data.printers)) {
-                        data.printers.forEach((p, idx) => {
-                            if (idx === 0) printersUpdate["printers.bw.name"] = p.name || p;
-                            if (idx === 1) printersUpdate["printers.color.name"] = p.name || p;
-                        });
-                    }
+                    const printersUpdate = Array.isArray(data.printers)
+                        ? buildPrinterDefaultsUpdate(data.printers)
+                        : {};
                     if (Object.keys(printersUpdate).length > 0) {
                         Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(err => console.error("DB Error:", err));
                     }
@@ -134,12 +189,7 @@ export function handleAgentConnection(ws, kioskId, sockets) {
             case "printer-list-result": {
                 console.log(`🖨️ Printer list from ${kioskId}`);
                 if (data?.printers && Array.isArray(data.printers)) {
-                    const printersUpdate = {};
-                    data.printers.forEach((p, idx) => {
-                        // Assuming the first returned is B&W default, second is Color. This can be adapted.
-                        if (idx === 0) printersUpdate["printers.bw.name"] = typeof p === 'string' ? p : p.name;
-                        if (idx === 1) printersUpdate["printers.color.name"] = typeof p === 'string' ? p : p.name;
-                    });
+                    const printersUpdate = buildPrinterDefaultsUpdate(data.printers);
                     if (Object.keys(printersUpdate).length > 0) {
                         Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(console.error);
                     }
