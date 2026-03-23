@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -6,6 +6,7 @@ import { UploadCloud, FileText, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PDFDocument } from "pdf-lib";
 import { STORAGE_KEYS } from "@/config/constants";
+import PdfPagePreview from "@/components/PdfPagePreview";
 import type { FilePrintConfig, MergedPdfMeta } from "@/types";
 
 const PAPER_SIZES = {
@@ -24,6 +25,8 @@ const defaultConfig = (file: File): FilePrintConfig => ({
     fitToPage: true,
     colorMode: "monochrome",
 });
+
+/* ─── Page-range helpers (kept identical to original logic) ────────────── */
 
 function parsePageRanges(rangeText: string, totalPages: number): number[] {
     if (!rangeText.trim()) {
@@ -57,6 +60,33 @@ function parsePageRanges(rangeText: string, totalPages: number): number[] {
     return [...selected].sort((a, b) => a - b);
 }
 
+/**
+ * Convert a sorted array of 1-indexed page numbers into a compact range string.
+ * E.g. [1,2,3,5] → "1-3,5"
+ */
+function pagesToRangeString(pages: number[]): string {
+    if (pages.length === 0) return "";
+
+    const sorted = [...pages].sort((a, b) => a - b);
+    const chunks: string[] = [];
+    let start = sorted[0];
+    let prev = sorted[0];
+
+    for (let i = 1; i < sorted.length; i += 1) {
+        const curr = sorted[i];
+        if (curr === prev + 1) {
+            prev = curr;
+            continue;
+        }
+        chunks.push(start === prev ? `${start}` : `${start}-${prev}`);
+        start = curr;
+        prev = curr;
+    }
+
+    chunks.push(start === prev ? `${start}` : `${start}-${prev}`);
+    return chunks.join(",");
+}
+
 function numberRanges(pages: number[]): string {
     if (pages.length === 0) return "";
 
@@ -80,6 +110,8 @@ function numberRanges(pages: number[]): string {
     return chunks.join(",");
 }
 
+/* ─── Binary helpers ──────────────────────────────────────────────────── */
+
 function uint8ToBase64(bytes: Uint8Array): string {
     let binary = "";
     const chunkSize = 0x8000;
@@ -89,6 +121,8 @@ function uint8ToBase64(bytes: Uint8Array): string {
     }
     return btoa(binary);
 }
+
+/* ─── Merge PDFs (unchanged) ─────────────────────────────────────────── */
 
 async function mergeConfiguredPdfs(files: File[], configs: FilePrintConfig[]) {
     const merged = await PDFDocument.create();
@@ -179,6 +213,10 @@ async function mergeConfiguredPdfs(files: File[], configs: FilePrintConfig[]) {
     return { mergedBytes, meta };
 }
 
+/* ======================================================================
+   Upload Page
+   ====================================================================== */
+
 export default function UploadPage() {
     const navigate = useNavigate();
     const [files, setFiles] = useState<File[]>([]);
@@ -187,12 +225,21 @@ export default function UploadPage() {
     const [processing, setProcessing] = useState(false);
     const [message, setMessage] = useState("");
 
+    // Track total page counts per file (populated by PdfPagePreview)
+    const [totalPagesMap, setTotalPagesMap] = useState<Record<string, number>>({});
+
+    // Track which pages are selected per file (0-indexed Sets)
+    const [selectedPagesMap, setSelectedPagesMap] = useState<Record<string, Set<number>>>({});
+
     const totalSelectedFiles = useMemo(() => files.length, [files.length]);
 
     const syncNewFiles = (incoming: File[]) => {
         const onlyPdfs = incoming.filter((file) => file.type === "application/pdf");
         setFiles(onlyPdfs);
         setConfigs(onlyPdfs.map(defaultConfig));
+        // Reset page maps — they'll be populated once previews load
+        setTotalPagesMap({});
+        setSelectedPagesMap({});
     };
 
     const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -208,6 +255,89 @@ export default function UploadPage() {
     const updateConfig = (fileName: string, patch: Partial<FilePrintConfig>) => {
         setConfigs((prev) => prev.map((cfg) => (cfg.fileName === fileName ? { ...cfg, ...patch } : cfg)));
     };
+
+    /** Called by PdfPagePreview once the PDF is loaded so we know the total page count */
+    const handleTotalPagesReady = useCallback((fileName: string, total: number) => {
+        setTotalPagesMap((prev) => {
+            if (prev[fileName] === total) return prev;
+            return { ...prev, [fileName]: total };
+        });
+
+        // Initialize all pages as selected (matching default empty pageRanges → all pages)
+        setSelectedPagesMap((prev) => {
+            if (prev[fileName]) return prev;
+            return { ...prev, [fileName]: new Set(Array.from({ length: total }, (_, i) => i)) };
+        });
+    }, []);
+
+    /**
+     * Toggle a single page in the visual preview.
+     * Syncs the pageRanges text field to match.
+     */
+    const handleTogglePage = useCallback(
+        (fileName: string, pageIndex: number) => {
+            setSelectedPagesMap((prev) => {
+                const current = new Set(prev[fileName] ?? []);
+                if (current.has(pageIndex)) {
+                    current.delete(pageIndex);
+                } else {
+                    current.add(pageIndex);
+                }
+                const updated = { ...prev, [fileName]: current };
+
+                // Derive the pageRanges string from the new selection
+                const totalPages = totalPagesMap[fileName] ?? 0;
+                const allSelected = current.size === totalPages && totalPages > 0;
+                const rangeStr = allSelected
+                    ? "" // empty means "all pages"
+                    : pagesToRangeString([...current].map((p) => p + 1)); // convert to 1-indexed
+
+                // Update config outside of state-setter to avoid stale closure issues
+                setTimeout(() => updateConfig(fileName, { pageRanges: rangeStr }), 0);
+
+                return updated;
+            });
+        },
+        [totalPagesMap],
+    );
+
+    /**
+     * When the user manually edits the pageRanges text field,
+     * sync the visual checkboxes to match.
+     */
+    const handlePageRangesChange = useCallback(
+        (fileName: string, newValue: string) => {
+            updateConfig(fileName, { pageRanges: newValue });
+
+            const total = totalPagesMap[fileName];
+            if (!total) return;
+
+            const parsed = parsePageRanges(newValue, total);
+            setSelectedPagesMap((prev) => ({
+                ...prev,
+                [fileName]: new Set(parsed),
+            }));
+        },
+        [totalPagesMap],
+    );
+
+    /** Select / deselect all pages at once */
+    const handleSelectAll = useCallback(
+        (fileName: string, selectAll: boolean) => {
+            const total = totalPagesMap[fileName] ?? 0;
+            const newSet = selectAll
+                ? new Set(Array.from({ length: total }, (_, i) => i))
+                : new Set<number>();
+
+            setSelectedPagesMap((prev) => ({ ...prev, [fileName]: newSet }));
+
+            // Empty string means "all pages"; empty array means "no pages"
+            updateConfig(fileName, {
+                pageRanges: selectAll ? "" : pagesToRangeString([]),
+            });
+        },
+        [totalPagesMap],
+    );
 
     const handleProcess = async () => {
         if (!files.length) {
@@ -251,6 +381,7 @@ export default function UploadPage() {
                 </CardHeader>
 
                 <CardContent className="space-y-6">
+                    {/* ── Drop zone ─────────────────────────────────────────── */}
                     <div
                         className={cn(
                             "group relative cursor-pointer rounded-2xl border-2 border-dashed p-8 transition-all duration-300",
@@ -307,108 +438,174 @@ export default function UploadPage() {
                         />
                     </div>
 
-                    {configs.map((cfg, index) => (
-                        <details
-                            key={cfg.fileId}
-                            className="rounded-xl border border-border bg-card p-4"
-                            open={index === 0}
-                        >
-                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
-                                <span className="flex items-center gap-2">
-                                    <FileText className="h-4 w-4 text-success" />
-                                    {cfg.fileName}
-                                </span>
-                                <span className="text-xs text-muted-foreground">File #{index + 1}</span>
-                            </summary>
+                    {/* ── Per-file accordion ────────────────────────────────── */}
+                    {configs.map((cfg, index) => {
+                        const total = totalPagesMap[cfg.fileName] ?? 0;
+                        const selected = selectedPagesMap[cfg.fileName] ?? new Set<number>();
+                        const selectedCount = selected.size;
 
-                            <div className="mt-4 grid gap-4 md:grid-cols-2">
-                                <label className="text-sm">
-                                    <span className="mb-1 block text-muted-foreground">Copies</span>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={20}
-                                        value={cfg.copies}
-                                        onChange={(e) =>
-                                            updateConfig(cfg.fileName, {
-                                                copies: Math.max(1, Number(e.target.value) || 1),
-                                            })
+                        return (
+                            <details
+                                key={cfg.fileId}
+                                className="rounded-xl border border-border bg-card p-4"
+                                open={index === 0}
+                            >
+                                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
+                                    <span className="flex items-center gap-2">
+                                        <FileText className="h-4 w-4 text-success" />
+                                        {cfg.fileName}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                        {total > 0
+                                            ? `${selectedCount}/${total} pages · File #${index + 1}`
+                                            : `File #${index + 1}`}
+                                    </span>
+                                </summary>
+
+                                {/* Configuration grid (unchanged) */}
+                                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                                    <label className="text-sm">
+                                        <span className="mb-1 block text-muted-foreground">Copies</span>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={20}
+                                            value={cfg.copies}
+                                            onChange={(e) =>
+                                                updateConfig(cfg.fileName, {
+                                                    copies: Math.max(1, Number(e.target.value) || 1),
+                                                })
+                                            }
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2"
+                                        />
+                                    </label>
+
+                                    <label className="text-sm">
+                                        <span className="mb-1 block text-muted-foreground">Orientation</span>
+                                        <select
+                                            value={cfg.orientation}
+                                            onChange={(e) =>
+                                                updateConfig(cfg.fileName, {
+                                                    orientation: e.target.value as FilePrintConfig["orientation"],
+                                                })
+                                            }
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2"
+                                        >
+                                            <option value="portrait">portrait</option>
+                                            <option value="landscape">landscape</option>
+                                        </select>
+                                    </label>
+
+                                    <label className="text-sm">
+                                        <span className="mb-1 block text-muted-foreground">Paper Size</span>
+                                        <select
+                                            value={cfg.paperSize}
+                                            onChange={(e) =>
+                                                updateConfig(cfg.fileName, {
+                                                    paperSize: e.target.value as FilePrintConfig["paperSize"],
+                                                })
+                                            }
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2"
+                                        >
+                                            <option value="A4">A4</option>
+                                            <option value="Letter">Letter</option>
+                                            <option value="Legal">Legal</option>
+                                        </select>
+                                    </label>
+
+                                    <label className="text-sm">
+                                        <span className="mb-1 block text-muted-foreground">Color Mode</span>
+                                        <select
+                                            value={cfg.colorMode}
+                                            onChange={(e) =>
+                                                updateConfig(cfg.fileName, {
+                                                    colorMode: e.target.value as FilePrintConfig["colorMode"],
+                                                })
+                                            }
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2"
+                                        >
+                                            <option value="monochrome">monochrome</option>
+                                            <option value="color">color</option>
+                                        </select>
+                                    </label>
+
+                                    <label className="md:col-span-2 text-sm">
+                                        <span className="mb-1 block text-muted-foreground">
+                                            Page Ranges (e.g. 1-3,5)
+                                        </span>
+                                        <input
+                                            value={cfg.pageRanges}
+                                            onChange={(e) =>
+                                                handlePageRangesChange(cfg.fileName, e.target.value)
+                                            }
+                                            className="w-full rounded-md border border-border bg-background px-3 py-2"
+                                            placeholder="Leave empty for all pages"
+                                        />
+                                    </label>
+
+                                    <label className="flex items-center gap-2 text-sm md:col-span-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={cfg.fitToPage}
+                                            onChange={(e) =>
+                                                updateConfig(cfg.fileName, { fitToPage: e.target.checked })
+                                            }
+                                        />
+                                        Fit pages to selected paper size
+                                    </label>
+                                </div>
+
+                                {/* ── PDF page thumbnails + visual selection ── */}
+                                <div className="mt-4 border-t border-border pt-4">
+                                    {/* Select / Deselect all */}
+                                    {total > 0 && (
+                                        <div className="mb-3 flex items-center gap-3">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSelectAll(cfg.fileName, true)}
+                                                className={cn(
+                                                    "rounded-md px-3 py-1 text-xs font-medium transition-colors cursor-pointer",
+                                                    selectedCount === total
+                                                        ? "bg-success/20 text-success"
+                                                        : "bg-muted text-muted-foreground hover:bg-success/10 hover:text-success"
+                                                )}
+                                            >
+                                                Select All
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSelectAll(cfg.fileName, false)}
+                                                className={cn(
+                                                    "rounded-md px-3 py-1 text-xs font-medium transition-colors cursor-pointer",
+                                                    selectedCount === 0
+                                                        ? "bg-destructive/20 text-destructive"
+                                                        : "bg-muted text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                                )}
+                                            >
+                                                Deselect All
+                                            </button>
+                                            <span className="ml-auto text-xs text-muted-foreground">
+                                                {selectedCount} of {total} page{total > 1 ? "s" : ""} selected
+                                            </span>
+                                        </div>
+                                    )}
+
+                                    <PdfPagePreview
+                                        file={files[index]}
+                                        selectedPages={selected}
+                                        onTogglePage={(pageIndex) =>
+                                            handleTogglePage(cfg.fileName, pageIndex)
                                         }
-                                        className="w-full rounded-md border border-border bg-background px-3 py-2"
+                                        onTotalPagesReady={(t) =>
+                                            handleTotalPagesReady(cfg.fileName, t)
+                                        }
                                     />
-                                </label>
+                                </div>
+                            </details>
+                        );
+                    })}
 
-                                <label className="text-sm">
-                                    <span className="mb-1 block text-muted-foreground">Orientation</span>
-                                    <select
-                                        value={cfg.orientation}
-                                        onChange={(e) =>
-                                            updateConfig(cfg.fileName, {
-                                                orientation: e.target.value as FilePrintConfig["orientation"],
-                                            })
-                                        }
-                                        className="w-full rounded-md border border-border bg-background px-3 py-2"
-                                    >
-                                        <option value="portrait">portrait</option>
-                                        <option value="landscape">landscape</option>
-                                    </select>
-                                </label>
-
-                                <label className="text-sm">
-                                    <span className="mb-1 block text-muted-foreground">Paper Size</span>
-                                    <select
-                                        value={cfg.paperSize}
-                                        onChange={(e) =>
-                                            updateConfig(cfg.fileName, {
-                                                paperSize: e.target.value as FilePrintConfig["paperSize"],
-                                            })
-                                        }
-                                        className="w-full rounded-md border border-border bg-background px-3 py-2"
-                                    >
-                                        <option value="A4">A4</option>
-                                        <option value="Letter">Letter</option>
-                                        <option value="Legal">Legal</option>
-                                    </select>
-                                </label>
-
-                                <label className="text-sm">
-                                    <span className="mb-1 block text-muted-foreground">Color Mode</span>
-                                    <select
-                                        value={cfg.colorMode}
-                                        onChange={(e) =>
-                                            updateConfig(cfg.fileName, {
-                                                colorMode: e.target.value as FilePrintConfig["colorMode"],
-                                            })
-                                        }
-                                        className="w-full rounded-md border border-border bg-background px-3 py-2"
-                                    >
-                                        <option value="monochrome">monochrome</option>
-                                        <option value="color">color</option>
-                                    </select>
-                                </label>
-
-                                <label className="md:col-span-2 text-sm">
-                                    <span className="mb-1 block text-muted-foreground">Page Ranges (e.g. 1-3,5)</span>
-                                    <input
-                                        value={cfg.pageRanges}
-                                        onChange={(e) => updateConfig(cfg.fileName, { pageRanges: e.target.value })}
-                                        className="w-full rounded-md border border-border bg-background px-3 py-2"
-                                        placeholder="Leave empty for all pages"
-                                    />
-                                </label>
-
-                                <label className="flex items-center gap-2 text-sm md:col-span-2">
-                                    <input
-                                        type="checkbox"
-                                        checked={cfg.fitToPage}
-                                        onChange={(e) => updateConfig(cfg.fileName, { fitToPage: e.target.checked })}
-                                    />
-                                    Fit pages to selected paper size
-                                </label>
-                            </div>
-                        </details>
-                    ))}
-
+                    {/* ── Process button ─────────────────────────────────────── */}
                     <Button
                         onClick={handleProcess}
                         disabled={processing || !files.length}
