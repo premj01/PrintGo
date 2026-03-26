@@ -112,15 +112,7 @@ function numberRanges(pages: number[]): string {
 
 /* ─── Binary helpers ──────────────────────────────────────────────────── */
 
-function uint8ToBase64(bytes: Uint8Array): string {
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.slice(i, i + chunkSize);
-        binary += String.fromCharCode(...chunk);
-    }
-    return btoa(binary);
-}
+import { set as idbSet } from "idb-keyval";
 
 /* ─── Merge PDFs (unchanged) ─────────────────────────────────────────── */
 
@@ -356,13 +348,14 @@ export default function UploadPage() {
                 return;
             }
 
-            localStorage.setItem(STORAGE_KEYS.MERGED_PDF_BASE64, uint8ToBase64(mergedBytes));
+            const blob = new Blob([new Uint8Array(mergedBytes)], { type: "application/pdf" });
+            await idbSet(STORAGE_KEYS.MERGED_PDF_BASE64, blob);
             localStorage.setItem(STORAGE_KEYS.MERGED_PDF_META, JSON.stringify(meta));
 
             navigate("/preview");
-        } catch (error) {
-            console.error(error);
-            setMessage("Failed to merge PDFs. Please verify files and page ranges.");
+        } catch (error: any) {
+            console.error("PDF Merge Error:", error);
+            setMessage(`Failed to merge PDFs: ${error?.message || "Unknown error"}`);
         } finally {
             setProcessing(false);
         }

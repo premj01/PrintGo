@@ -12,6 +12,7 @@ import { printFile, requestKioskS3Download } from "../../ws/services/printer.ser
 import { createSignedDownloadUrl, createSignedUploadUrl } from "../../services/s3Storage.service.js";
 import { verifyToken } from "../../util/jwt.util.js";
 import prisma from "../../config/prisma.js";
+import Kiosk from "../../models/kiosk.model.js";
 
 const router = express.Router();
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -325,9 +326,31 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
     try {
         const fileName = fileRecord.fileName || path.posix.basename(fileKey);
         const existingPending = pendingS3PrintJobs[sessionId] || {};
+        
+        let printerToUse = printer || null;
+        try {
+            const kioskSettings = await Kiosk.findOne({ kioskId: kioskId });
+            if (kioskSettings && kioskSettings.printers) {
+                if (colorMode === "color" && kioskSettings.printers.color?.name && kioskSettings.printers.color.name !== "dummy") {
+                    printerToUse = kioskSettings.printers.color.name;
+                } else if ((colorMode === "monochrome" || colorMode === "bw") && kioskSettings.printers.bw?.name && kioskSettings.printers.bw.name !== "dummy") {
+                    printerToUse = kioskSettings.printers.bw.name;
+                } else {
+                    // fallback based on what's available if exact match isn't present
+                    if (kioskSettings.printers.bw?.name && kioskSettings.printers.bw.name !== "dummy") {
+                        printerToUse = kioskSettings.printers.bw.name;
+                    } else if (kioskSettings.printers.color?.name && kioskSettings.printers.color.name !== "dummy") {
+                        printerToUse = kioskSettings.printers.color.name;
+                    }
+                }
+            }
+        } catch (dbErr) {
+            console.error(`❌ [start-print] Failed to fetch printer settings for kiosk ${kioskId}: ${dbErr.message}`);
+        }
+
         const mergedPrintOptions = {
             copies,
-            printer,
+            printer: printerToUse,
             orientation,
             paperSize,
             sides,
@@ -355,7 +378,7 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
         try {
             const printConfig = {
                 copies: copies || 1,
-                printer: printer || null,
+                printer: printerToUse || null,
                 orientation: orientation || "portrait",
                 paperSize: paperSize || "A4",
                 sides: sides || "one-sided",

@@ -7,16 +7,7 @@ import { kioskPrintService } from "@/services";
 import type { MergedPdfMeta } from "@/types";
 import { Loader2, CheckCircle2, AlertCircle, Download, Printer } from "lucide-react";
 
-function base64ToBlob(base64: string, type: string): Blob {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-
-    for (let i = 0; i < binary.length; i += 1) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-
-    return new Blob([bytes], { type });
-}
+import { get as idbGet } from "idb-keyval";
 
 type DownloadPhase = "idle" | "uploading" | "uploaded" | "kiosk-downloading" | "downloaded" | "failed";
 
@@ -52,7 +43,20 @@ export default function PaymentPage() {
     const [isPaid, setIsPaid] = useState(false);
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    const mergedPdfBase64 = localStorage.getItem(STORAGE_KEYS.MERGED_PDF_BASE64);
+    const [mergedPdfBlob, setMergedPdfBlob] = useState<Blob | null>(null);
+    const [isLoaded, setIsLoaded] = useState(false);
+
+    const uploadStartedRun = useRef(false);
+
+    // ── Load Merged PDF Blob from IndexedDB ──
+    useEffect(() => {
+        idbGet<Blob>(STORAGE_KEYS.MERGED_PDF_BASE64)
+            .then(blob => {
+                if (blob) setMergedPdfBlob(blob);
+            })
+            .finally(() => setIsLoaded(true));
+    }, []);
+
     const meta = useMemo(() => {
         const raw = localStorage.getItem(STORAGE_KEYS.MERGED_PDF_META);
         if (!raw) return null;
@@ -113,7 +117,89 @@ export default function PaymentPage() {
         }, 3000);
     }, [pollDownloadStatus, stopPolling]);
 
-    if (!mergedPdfBase64 || !meta) {
+    // ── Upload PDF in background ──
+    useEffect(() => {
+        if (uploadStartedRun.current || !mergedPdfBlob || !meta) return;
+        uploadStartedRun.current = true;
+
+        const prepareInBackground = async () => {
+            try {
+                const existingFileKey = localStorage.getItem(STORAGE_KEYS.UPLOADED_FILE_NAME);
+                if (existingFileKey) {
+                    try {
+                        const statusCheck = await kioskPrintService.checkDownloadStatus();
+                        if (statusCheck.s3UploadStatus !== "unknown") {
+                            setPreparedFileKey(existingFileKey);
+                            setDownloadPhase(statusCheck.isDownloaded ? "downloaded" : "uploaded");
+                            return;
+                        }
+                    } catch {
+                        // Backend check failed — fall through
+                    }
+                    console.log("[PaymentPage] Stale fileKey cache detected, re-uploading...");
+                    localStorage.removeItem(STORAGE_KEYS.UPLOADED_FILE_NAME);
+                }
+
+                setPreparing(true);
+                setDownloadPhase("uploading");
+
+                const mergedFile = new File([mergedPdfBlob], "merged-printgo.pdf", {
+                    type: "application/pdf",
+                });
+
+                const uploadResponse = await kioskPrintService.uploadMergedPdf(mergedFile, meta);
+                const uploadedFileKey = uploadResponse.fileKey;
+
+                if (!uploadedFileKey) {
+                    throw new Error("Merged file key missing from upload response");
+                }
+
+                localStorage.setItem(STORAGE_KEYS.UPLOADED_FILE_NAME, uploadedFileKey);
+                setPreparedFileKey(uploadedFileKey);
+                setDownloadPhase("uploaded");
+            } catch (err) {
+                console.error(err);
+                setError("Failed to prepare PDF. Please retry.");
+                setDownloadPhase("failed");
+            } finally {
+                setPreparing(false);
+            }
+        };
+
+        void prepareInBackground();
+    }, [mergedPdfBlob, meta]);
+
+    // ── Polling Effect ──
+    useEffect(() => {
+        if (!isPaid || !preparedFileKey) {
+            return;
+        }
+
+        if (downloadPhase === "downloaded") {
+            stopPolling();
+            return;
+        }
+
+        startPolling();
+    }, [isPaid, preparedFileKey, downloadPhase, startPolling, stopPolling]);
+
+    // ── Cleanup Polling on Unmount ──
+    useEffect(() => {
+        return () => {
+            stopPolling();
+        };
+    }, [stopPolling]);
+
+    // ── Conditional Returns ──
+    if (!isLoaded) {
+        return (
+            <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center p-6 text-muted-foreground animate-pulse">
+                Loading payment details...
+            </div>
+        );
+    }
+
+    if (!mergedPdfBlob || !meta) {
         return (
             <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center p-6">
                 <Card className="w-full max-w-xl">
@@ -129,101 +215,17 @@ export default function PaymentPage() {
         );
     }
 
+    // ── Calculated Values and Handlers ──
     const bwAmount = meta.bwPageCount * 1;
     const colorAmount = meta.colorPageCount * 4;
     const totalAmount = bwAmount + colorAmount;
-
-    const uploadStartedRun = useRef(false);
-
-    useEffect(() => {
-        return () => {
-            stopPolling();
-        };
-    }, [stopPolling]);
-
-    // ── Upload PDF in background ──
-    useEffect(() => {
-        if (uploadStartedRun.current) return;
-        uploadStartedRun.current = true;
-
-        const prepareInBackground = async () => {
-            try {
-                const existingFileKey = localStorage.getItem(STORAGE_KEYS.UPLOADED_FILE_NAME);
-                if (existingFileKey) {
-                    // Verify the cached key is still valid on the backend
-                    try {
-                        const statusCheck = await kioskPrintService.checkDownloadStatus();
-                        if (statusCheck.s3UploadStatus !== "unknown") {
-                            // Valid record exists — use cached key
-                            setPreparedFileKey(existingFileKey);
-                            setDownloadPhase(statusCheck.isDownloaded ? "downloaded" : "uploaded");
-                            return;
-                        }
-                    } catch {
-                        // Backend check failed — fall through to fresh upload
-                    }
-
-                    // Stale cache (server restarted / no matching record) — clear and re-upload
-                    console.log("[PaymentPage] Stale fileKey cache detected, re-uploading...");
-                    localStorage.removeItem(STORAGE_KEYS.UPLOADED_FILE_NAME);
-                }
-
-                setPreparing(true);
-                setDownloadPhase("uploading");
-
-                const mergedBlob = base64ToBlob(mergedPdfBase64, "application/pdf");
-                const mergedFile = new File([mergedBlob], "merged-printgo.pdf", {
-                    type: "application/pdf",
-                });
-
-                const uploadResponse = await kioskPrintService.uploadMergedPdf(mergedFile, meta);
-                const uploadedFileKey = uploadResponse.fileKey;
-
-                if (!uploadedFileKey) {
-                    throw new Error("Merged file key missing from upload response");
-                }
-
-                localStorage.setItem(STORAGE_KEYS.UPLOADED_FILE_NAME, uploadedFileKey);
-
-                setPreparedFileKey(uploadedFileKey);
-                setDownloadPhase("uploaded");
-            } catch (err) {
-                console.error(err);
-                setError("Failed to prepare PDF. Please retry.");
-                setDownloadPhase("failed");
-            } finally {
-                setPreparing(false);
-            }
-        };
-
-        void prepareInBackground();
-    }, [mergedPdfBase64, meta]);
-
-    // Poll kiosk download only after payment so payment is never blocked by download progress.
-    useEffect(() => {
-        if (!isPaid || !preparedFileKey) {
-            return;
-        }
-
-        if (downloadPhase === "downloaded") {
-            stopPolling();
-            return;
-        }
-
-        startPolling();
-    }, [isPaid, preparedFileKey, downloadPhase, startPolling, stopPolling]);
-
     const isKioskReady = downloadPhase === "downloaded";
 
-    // ── Handle Payment (dummy — always succeeds) ──
     const handlePay = async () => {
         try {
             setPaymentLoading(true);
             setError("");
-
-            // Simulate payment processing
             await new Promise((resolve) => setTimeout(resolve, 1200));
-
             setIsPaid(true);
         } catch (err) {
             console.error(err);
@@ -233,7 +235,6 @@ export default function PaymentPage() {
         }
     };
 
-    // ── Handle Print (after payment, checks isDownloaded) ──
     const handlePrint = async () => {
         try {
             setPrintLoading(true);
@@ -245,9 +246,7 @@ export default function PaymentPage() {
                 throw new Error("PDF is not prepared yet. Please wait a moment and try again.");
             }
 
-            // Check if kiosk has the file
             if (!isKioskReady) {
-                // One more check before failing
                 const latestStatus = await kioskPrintService.checkDownloadStatus();
                 if (!latestStatus.isDownloaded) {
                     setError("Kiosk is still downloading your file. Please wait a moment and try again.");
@@ -306,7 +305,7 @@ export default function PaymentPage() {
                         </div>
                     </div>
 
-                    {/* ── Kiosk Download Status (informational, NOT blocking payment) ── */}
+                    {/* ── Kiosk Download Status ── */}
                     <div
                         className={`flex items-center gap-3 rounded-xl border p-4 transition-all duration-500 ${
                             downloadPhase === "downloaded"
@@ -344,7 +343,6 @@ export default function PaymentPage() {
                         </Button>
 
                         {!isPaid ? (
-                            /* ── PAYMENT BUTTON (available even while kiosk is downloading) ── */
                             <Button
                                 onClick={handlePay}
                                 disabled={paymentLoading || preparing || !preparedFileKey}
@@ -356,7 +354,6 @@ export default function PaymentPage() {
                                         : `Pay Rs ${totalAmount}`}
                             </Button>
                         ) : (
-                            /* ── PRINT BUTTON (shown only after payment) ── */
                             <Button
                                 onClick={handlePrint}
                                 disabled={printLoading}
