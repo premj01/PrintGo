@@ -91,6 +91,10 @@ export interface PrintStatusPayload {
     fileName?: string;
     details?: unknown;
     updatedAt: string;
+    sections?: Array<{ mode: "bw" | "color"; pageRanges: string; status: string }>;
+    refundStatus?: string;
+    refundId?: string;
+    refundAmount?: number;
 }
 
 export interface DownloadStatusResponse {
@@ -103,6 +107,55 @@ export interface DownloadStatusResponse {
     isPrinted: boolean;
     paymentStatus?: string;
     updatedAt?: string;
+}
+
+// ===== Payment Types (Razorpay) =====
+export interface CreateOrderResponse {
+    success: boolean;
+    orderId: string;
+    amount: number;     // in paise
+    currency: string;
+    keyId: string;
+}
+
+export interface VerifyPaymentResponse {
+    success: boolean;
+    message: string;
+    paymentId: string;
+}
+
+export interface RazorpayCheckoutOptions {
+    key: string;
+    amount: number;
+    currency: string;
+    name: string;
+    description: string;
+    order_id: string;
+    handler: (response: RazorpayPaymentResponse) => void;
+    prefill?: {
+        name?: string;
+        email?: string;
+        contact?: string;
+    };
+    theme?: {
+        color?: string;
+    };
+    modal?: {
+        ondismiss?: () => void;
+    };
+}
+
+export interface RazorpayPaymentResponse {
+    razorpay_order_id: string;
+    razorpay_payment_id: string;
+    razorpay_signature: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface RazorpayInstance {
+    open: () => void;
+    close: () => void;
+    on: (event: string, handler: (...args: any[]) => void) => void;
 }
 
 // ===== Route Types =====

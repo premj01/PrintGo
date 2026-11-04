@@ -62,6 +62,7 @@ export function printFile(kioskId, options = {}) {
     if (!_required(options.sessionId, "sessionId", tag)) return false;
 
     const payload = {
+        ...(options.sections && { sections: options.sections, batchId: options.batchId }),
         fileName: options.fileName,
         sessionId: options.sessionId,
         copies: options.copies ?? 1,
@@ -74,7 +75,8 @@ export function printFile(kioskId, options = {}) {
         colorMode: options.colorMode ?? "monochrome",
     };
 
-    sendToKiosk(kioskSockets, kioskId, "print-file-request-from-user-via-server", payload);
+    if (kioskSockets[kioskId]?.kiosk?.readyState !== 1) return false;
+    sendToKiosk(kioskSockets, kioskId, options.sections ? "print-sections" : "print-file-request-from-user-via-server", payload);
     return true;
 }
 

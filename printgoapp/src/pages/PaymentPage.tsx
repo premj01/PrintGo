@@ -3,11 +3,20 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { STORAGE_KEYS } from "@/config/constants";
+import { ENV } from "@/config";
 import { kioskPrintService } from "@/services";
-import type { MergedPdfMeta } from "@/types";
-import { Loader2, CheckCircle2, AlertCircle, Download, Printer } from "lucide-react";
+import type { MergedPdfMeta, RazorpayCheckoutOptions, RazorpayPaymentResponse, RazorpayInstance } from "@/types";
+import { Loader2, CheckCircle2, AlertCircle, Download, Printer, CreditCard, ShieldCheck } from "lucide-react";
 
 import { get as idbGet } from "idb-keyval";
+
+// Declare Razorpay on window (loaded via checkout.js in index.html)
+declare global {
+    interface Window {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        Razorpay: new (options: RazorpayCheckoutOptions) => RazorpayInstance;
+    }
+}
 
 type DownloadPhase = "idle" | "uploading" | "uploaded" | "kiosk-downloading" | "downloaded" | "failed";
 
@@ -41,6 +50,7 @@ export default function PaymentPage() {
 
     // Payment state — after payment, show Print button
     const [isPaid, setIsPaid] = useState(false);
+    const [paymentId, setPaymentId] = useState<string | null>(null);
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const [mergedPdfBlob, setMergedPdfBlob] = useState<Blob | null>(null);
@@ -221,16 +231,74 @@ export default function PaymentPage() {
     const totalAmount = bwAmount + colorAmount;
     const isKioskReady = downloadPhase === "downloaded";
 
+    // ── Razorpay Payment Flow ──
     const handlePay = async () => {
         try {
             setPaymentLoading(true);
             setError("");
-            await new Promise((resolve) => setTimeout(resolve, 1200));
-            setIsPaid(true);
+
+            // 1. Create order on backend
+            const orderData = await kioskPrintService.createPaymentOrder(totalAmount, preparedFileKey || localStorage.getItem(STORAGE_KEYS.UPLOADED_FILE_NAME) || undefined);
+
+            if (!orderData.success || !orderData.orderId) {
+                throw new Error("Failed to create payment order");
+            }
+
+            // 2. Open Razorpay Checkout
+            const options: RazorpayCheckoutOptions = {
+                key: ENV.RAZORPAY_KEY_ID,
+                amount: orderData.amount,
+                currency: orderData.currency || "INR",
+                name: "PrintGo",
+                description: `Print Job — ${meta.totalPages} pages`,
+                order_id: orderData.orderId,
+                handler: async (response: RazorpayPaymentResponse) => {
+                    try {
+                        // 3. Verify payment signature on backend
+                        const verifyResult = await kioskPrintService.verifyPayment({
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature,
+                        });
+
+                        if (verifyResult.success) {
+                            setIsPaid(true);
+                            setPaymentId(verifyResult.paymentId);
+                            setError("");
+                            console.log("[PaymentPage] Payment verified:", verifyResult.paymentId);
+                        } else {
+                            setError("Payment verification failed. Please contact support.");
+                        }
+                    } catch (err) {
+                        console.error("Payment verification error:", err);
+                        setError("Payment verification failed. Your money is safe — contact support if charged.");
+                    } finally {
+                        setPaymentLoading(false);
+                    }
+                },
+                prefill: {
+                    name: "PrintGo User",
+                },
+                theme: {
+                    color: "#10b981",
+                },
+                modal: {
+                    ondismiss: () => {
+                        setPaymentLoading(false);
+                        console.log("[PaymentPage] Razorpay checkout dismissed");
+                    },
+                },
+            };
+
+            const rzp = new window.Razorpay(options);
+            rzp.on("payment.failed", () => {
+                setError("Payment failed. Please try again.");
+                setPaymentLoading(false);
+            });
+            rzp.open();
         } catch (err) {
             console.error(err);
-            setError("Payment failed. Please try again.");
-        } finally {
+            setError(err instanceof Error ? err.message : "Payment failed. Please try again.");
             setPaymentLoading(false);
         }
     };
@@ -279,7 +347,7 @@ export default function PaymentPage() {
         <div className="min-h-[calc(100vh-10rem)] bg-gradient-to-br from-surface via-background to-accent/20 p-6">
             <Card className="mx-auto w-full max-w-3xl shadow-xl">
                 <CardHeader>
-                    <CardTitle>{isPaid ? "Payment Successful!" : "Dummy Payment"}</CardTitle>
+                    <CardTitle>{isPaid ? "Payment Successful!" : "Complete Payment"}</CardTitle>
                     <CardDescription>
                         {isPaid
                             ? "Your payment has been processed. You can now print your document."
@@ -304,6 +372,30 @@ export default function PaymentPage() {
                             {isPaid && <CheckCircle2 className="h-6 w-6 text-success" />}
                         </div>
                     </div>
+
+                    {/* ── Payment Security Badge ── */}
+                    {!isPaid && (
+                        <div className="flex items-center gap-2 rounded-xl border border-accent/20 bg-accent/5 p-3">
+                            <ShieldCheck className="h-5 w-5 text-accent shrink-0" />
+                            <div>
+                                <p className="text-sm font-medium text-foreground">Secure Payment via Razorpay</p>
+                                <p className="text-xs text-muted-foreground">
+                                    UPI, Cards, Net Banking, Wallets supported. Auto-refund if print fails.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── Payment ID display ── */}
+                    {isPaid && paymentId && (
+                        <div className="flex items-center gap-2 rounded-xl border border-success/30 bg-success/5 p-3">
+                            <CreditCard className="h-5 w-5 text-success shrink-0" />
+                            <div>
+                                <p className="text-sm font-medium text-foreground">Payment ID</p>
+                                <p className="text-xs text-muted-foreground font-mono">{paymentId}</p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* ── Kiosk Download Status ── */}
                     <div
@@ -346,12 +438,24 @@ export default function PaymentPage() {
                             <Button
                                 onClick={handlePay}
                                 disabled={paymentLoading || preparing || !preparedFileKey}
+                                className="gap-2"
                             >
-                                {preparing
-                                    ? "Preparing PDF..."
-                                    : paymentLoading
-                                        ? "Processing Payment..."
-                                        : `Pay Rs ${totalAmount}`}
+                                {preparing ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Preparing PDF...
+                                    </>
+                                ) : paymentLoading ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Processing Payment...
+                                    </>
+                                ) : (
+                                    <>
+                                        <CreditCard className="h-4 w-4" />
+                                        {`Pay Rs ${totalAmount}`}
+                                    </>
+                                )}
                             </Button>
                         ) : (
                             <Button

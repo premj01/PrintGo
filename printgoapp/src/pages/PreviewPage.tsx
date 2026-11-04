@@ -76,7 +76,9 @@ export default function PreviewPage() {
                                  Merged PDF Preview
                              </CardTitle>
                              <CardDescription className="font-semibold text-muted-foreground mt-1 text-sm tracking-wide">
-                                 Generated successfully with {meta.totalPages} pages
+                                 {meta.totalPages} pages in the merged PDF
+                                 {meta.bwPageCount > 0 && <span className="block">Black and white · Pages {meta.bwRanges}</span>}
+                                 {meta.colorPageCount > 0 && <span className="block">Color · Pages {meta.colorRanges} · Printed separately</span>}
                              </CardDescription>
                         </div>
                         <div className="flex items-center gap-3 px-4 py-2 bg-success/10 rounded-full border border-success/20 self-start shadow-sm shadow-success/10">

@@ -520,6 +520,11 @@ export default function UploadPage() {
                                             <option value="monochrome">monochrome</option>
                                             <option value="color">color</option>
                                         </select>
+                                        {cfg.colorMode === "color" && (
+                                            <span className="mt-1 block text-muted-foreground">
+                                                Color pages are appended to the end of the merged PDF and sent separately to the color printer.
+                                            </span>
+                                        )}
                                     </label>
 
                                     <label className="md:col-span-2 text-sm">

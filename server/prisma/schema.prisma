@@ -44,13 +44,24 @@ model NoAuthUser {
   fileConfig Json? @default("{}")
 
   // UPI Payment transaction data
-  paymentStatus    String?   @default("pending") // pending | success | failed | refunded
+  paymentStatus    String?   @default("pending") // pending | order_created | success | failed | refunded
   transactionId    String?   @unique
   paymentAmount    Float?
-  paymentMethod    String?   @default("UPI")
+  paymentMethod    String?   @default("Razorpay")
   paymentTimestamp DateTime?
   merchantOrderId  String?
   payerVpa         String? // UPI VPA e.g. user@upi
+
+  // Razorpay-specific fields
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+
+  // Refund tracking
+  refundId        String?
+  refundAmount    Float?
+  refundStatus    String?   // null | processed | failed
+  refundTimestamp  DateTime?
 
   // Print status tracking
   printStatus    String?   @default("pending") // pending | printing | success | failed
@@ -61,4 +72,5 @@ model NoAuthUser {
   @@index([userSessionNumber])
   @@index([kioskId])
   @@index([transactionId])
+  @@index([razorpayOrderId])
 }

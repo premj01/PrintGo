@@ -1,3 +1,4 @@
+import { updatePrinterInventory } from "../../services/printerInventory.js";
 /**
  * Agent WebSocket Handler
  * ───────────────────────
@@ -52,8 +53,8 @@ function buildPrinterDefaultsUpdate(printers) {
     const bwPrinters = normalized.filter(isBwPrinter);
     const defaultPrinter = normalized.find((p) => p.isDefault);
 
-    const selectedBw = bwPrinters.find((p) => p.isDefault) || defaultPrinter || bwPrinters[0] || normalized[0];
-    const selectedColor = colorPrinters.find((p) => p.isDefault) || defaultPrinter || colorPrinters[0] || normalized[0];
+    const selectedBw = bwPrinters.find((p) => p.isDefault) || bwPrinters[0] || defaultPrinter || normalized[0];
+    const selectedColor = colorPrinters.find((p) => p.isDefault) || colorPrinters[0];
 
     const update = { "printers.availableList": normalized };
     if (selectedBw) {
@@ -178,7 +179,7 @@ export function handleAgentConnection(ws, kioskId, sockets) {
                         ? buildPrinterDefaultsUpdate(data.printers)
                         : {};
                     if (Object.keys(printersUpdate).length > 0) {
-                        Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(err => console.error("DB Error:", err));
+                        updatePrinterInventory(kioskId, printersUpdate).catch(err => console.error("DB Error:", err));
                     }
                 }
 
@@ -191,7 +192,7 @@ export function handleAgentConnection(ws, kioskId, sockets) {
                 if (data?.printers && Array.isArray(data.printers)) {
                     const printersUpdate = buildPrinterDefaultsUpdate(data.printers);
                     if (Object.keys(printersUpdate).length > 0) {
-                        Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(console.error);
+                        updatePrinterInventory(kioskId, printersUpdate).catch(console.error);
                     }
                 }
                 sendToAdmin("printer-list-result", { kioskId, ...data });

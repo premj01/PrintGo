@@ -22,6 +22,8 @@ function formatStatus(status?: string): string {
         success: "Print completed successfully",
         failed: "Printing failed",
         "print-failed": "Printing failed",
+        "partially-printed": "Only part of your document printed",
+        "needs-review": "Printer outcome needs review",
         "kiosk-download-failed": "Kiosk failed to fetch PDF",
         "kiosk-download-request-failed": "Could not request kiosk download",
         "print-request-failed": "Could not send print command to kiosk",
@@ -64,7 +66,7 @@ export default function PrintingStatusPage() {
         <div className="min-h-[calc(100vh-10rem)] bg-gradient-to-br from-surface via-background to-accent/20 p-6">
             <Card className="mx-auto w-full max-w-3xl shadow-xl">
                 <CardHeader>
-                    <CardTitle>Printing In Progress</CardTitle>
+                    <CardTitle>Print status</CardTitle>
                     <CardDescription>
                         Live kiosk updates are fetched every 5 seconds via REST polling.
                     </CardDescription>
@@ -77,6 +79,29 @@ export default function PrintingStatusPage() {
                             <p className="mt-1 text-sm text-muted-foreground">Kiosk: {latest.kioskId}</p>
                         )}
                     </div>
+
+                    {latest?.sections?.map(part => (
+                        <p key={part.mode}>{part.mode === "bw" ? "Black and white" : "Color"} · Pages {part.pageRanges} · {part.status}</p>
+                    ))}
+                    {latest?.refundStatus === "needs-review" && <p>Your refund needs review by the kiosk operator.</p>}
+                    {/* ── Refund Info Banner ── */}
+                    {latest?.refundStatus && ["processed", "pending", "requested", "refunded"].includes(latest.refundStatus) && (
+                        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+                            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                💸 Automatic Refund Initiated
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                A refund was requested for the failed print pages.
+                                Refund amount: <strong>Rs {latest.refundAmount}</strong>
+                                {latest.refundId && (
+                                    <span className="ml-2 font-mono">({latest.refundId})</span>
+                                )}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                Refunds typically take 5-7 business days to reflect in your account.
+                            </p>
+                        </div>
+                    )}
 
                     {streamError && (
                         <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">

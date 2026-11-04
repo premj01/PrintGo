@@ -1,3 +1,5 @@
+import { updatePrinterInventory } from "../../services/printerInventory.js";
+import { recordSectionUpdate } from "../../services/sectionResults.js";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import path from "path";
@@ -12,6 +14,15 @@ import {
 import Kiosk from "../../models/kiosk.model.js";
 import send_file_to_kiosk from "./send_to_kiosk.js";
 import prisma from "../../config/prisma.js";
+import { initiateRefund } from "../../services/razorpay.service.js";
+
+async function usesSectionPrinting(kioskId, sessionId) {
+    if (!sessionId) return false;
+    const record = await prisma.noAuthUser.findFirst({
+        where: { kioskId, userSessionNumber: sessionId }, orderBy: { createdAt: "desc" }, select: { fileConfig: true },
+    });
+    return Boolean(record?.fileConfig?.sections);
+}
 
 function normalizePrinter(printer) {
     if (typeof printer === "string") {
@@ -160,6 +171,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     });
 
                     const pendingJob = pendingS3PrintJobs[ackSessionId];
+                    if (!pendingJob || pendingJob.kioskId !== kioskId || pendingJob.fileKey !== fileKey) break;
 
                     if (!success) {
                         if (pendingJob) {
@@ -182,7 +194,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         // ── Prisma: UPDATE kioskDownloadStatus → "failed" ──
                         try {
                             await prisma.noAuthUser.updateMany({
-                                where: { userSessionNumber: ackSessionId },
+                                where: { id: s3UploadRecords[fileKey]?.recordId, userSessionNumber: ackSessionId },
                                 data: { kioskDownloadStatus: "failed" },
                             });
                             console.log(`⚠️ [Prisma] kioskDownloadStatus → failed for session: ${ackSessionId}`);
@@ -197,6 +209,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         pendingS3PrintJobs[ackSessionId] = {
                             ...pendingJob,
                             downloadStatus: "success",
+                            supportsSections: msg.data?.supportsSections === true,
                             downloadedFileName: fileName || pendingJob.fileName,
                             updatedAt: new Date().toISOString(),
                         };
@@ -213,8 +226,8 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     // ── Prisma: UPDATE kioskDownloadStatus → "downloaded" ──
                     try {
                         await prisma.noAuthUser.updateMany({
-                            where: { userSessionNumber: ackSessionId },
-                            data: { kioskDownloadStatus: "downloaded" },
+                            where: { id: s3UploadRecords[fileKey]?.recordId, userSessionNumber: ackSessionId },
+                            data: { kioskDownloadStatus: "downloaded", s3UploadStatus: "uploaded" },
                         });
                         console.log(`✅ [Prisma] kioskDownloadStatus → downloaded for session: ${ackSessionId}`);
                     } catch (dbErr) {
@@ -229,6 +242,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         updatedPendingJob.paymentConfirmed
                     ) {
                         const printPayload = {
+                            ...updatedPendingJob.printOptions,
                             fileName: updatedPendingJob.downloadedFileName || updatedPendingJob.fileName,
                             sessionId: updatedPendingJob.sessionId,
                             copies: updatedPendingJob.printOptions?.copies ?? 1,
@@ -241,10 +255,10 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                             colorMode: updatedPendingJob.printOptions?.colorMode ?? "monochrome",
                         };
 
-                        sendToKiosk(kioskSockets, kioskId, "print-file-request-from-user-via-server", printPayload);
+                        sendToKiosk(kioskSockets, kioskId, printPayload.sections ? "print-sections" : "print-file-request-from-user-via-server", printPayload);
 
                         if (updatedPendingJob.fileKey && s3UploadRecords[updatedPendingJob.fileKey]) {
-                            s3UploadRecords[updatedPendingJob.fileKey].status = "printing";
+                            s3UploadRecords[updatedPendingJob.fileKey].status = printPayload.sections ? "printing-sections" : "printing";
                         }
 
                         printJobStatusBySession[ackSessionId] = {
@@ -324,8 +338,14 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
 
 
                     break;
+                case "print-section-update": {
+                    const accepted = await recordSectionUpdate(kioskId, msg.data);
+                    if (accepted) ws.send(JSON.stringify({ type: "print-section-ack", data: { batchId: msg.data.batchId, revision: msg.data.revision } }));
+                    break;
+                }
                 case "print-file-response-to-server": {
                     const sessionId = msg.sessionId || msg.data?.sessionId || sessionForKiosk;
+                    if (await usesSectionPrinting(kioskId, sessionId)) break;
                     if (sessionId) {
                         const printSuccess = Boolean(msg.success);
                         printJobStatusBySession[sessionId] = {
@@ -350,6 +370,60 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         } catch (dbErr) {
                             console.error(`❌ [Prisma] Failed to update isPrinted: ${dbErr.message}`);
                         }
+
+                        // ── AUTO-REFUND on print failure ──
+                        if (!printSuccess) {
+                            try {
+                                const records = await prisma.noAuthUser.findMany({
+                                    where: { userSessionNumber: sessionId },
+                                    orderBy: { createdAt: "desc" },
+                                    take: 1,
+                                    select: {
+                                        razorpayPaymentId: true,
+                                        paymentStatus: true,
+                                        paymentAmount: true,
+                                    },
+                                });
+
+                                const record = records[0];
+                                if (record?.razorpayPaymentId && record.paymentStatus === "success") {
+                                    console.log(`\n🔄 [Auto-Refund] Print failed for session ${sessionId}. Initiating refund...`);
+                                    console.log(`   ├─ paymentId : ${record.razorpayPaymentId}`);
+                                    console.log(`   └─ amount    : Rs ${record.paymentAmount}`);
+
+                                    const refund = await initiateRefund(
+                                        record.razorpayPaymentId,
+                                        record.paymentAmount ? Math.round(record.paymentAmount * 100) : null,
+                                        { sessionId, reason: "Print job failed — automatic refund" }
+                                    );
+
+                                    await prisma.noAuthUser.updateMany({
+                                        where: { userSessionNumber: sessionId },
+                                        data: {
+                                            paymentStatus: "refunded",
+                                            refundId: refund.id,
+                                            refundAmount: refund.amount / 100,
+                                            refundStatus: refund.status,
+                                            refundTimestamp: new Date(),
+                                        },
+                                    });
+
+                                    // Update in-memory status so frontend sees refund info
+                                    printJobStatusBySession[sessionId] = {
+                                        ...printJobStatusBySession[sessionId],
+                                        refundStatus: "refunded",
+                                        refundId: refund.id,
+                                        refundAmount: refund.amount / 100,
+                                    };
+
+                                    console.log(`   ✅ Auto-refund successful: ${refund.id}`);
+                                } else {
+                                    console.log(`   ℹ️  No eligible payment found for auto-refund (session: ${sessionId})`);
+                                }
+                            } catch (refundErr) {
+                                console.error(`   ❌ Auto-refund failed for session ${sessionId}: ${refundErr.message}`);
+                            }
+                        }
                     }
                     break;
                 }
@@ -366,6 +440,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     break;
                 }
                 case "printed-status":  //success , error , halt , waiting etc. 
+                    if (await usesSectionPrinting(kioskId, sessionForKiosk)) break;
                     console.log(`Printer status from ${kioskId}: ${msg.status}`);
 
                     if (sessionForKiosk) {
@@ -410,6 +485,63 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                         }
                     }
 
+                    // ── AUTO-REFUND on printed-status failed/error ──
+                    if (sessionForKiosk && (msg.status === "failed" || msg.status === "error" || msg.status === "print-failed")) {
+                        try {
+                            await prisma.noAuthUser.updateMany({
+                                where: { userSessionNumber: sessionForKiosk },
+                                data: {
+                                    printStatus: "failed",
+                                    isPrinted: false,
+                                },
+                            });
+
+                            const records = await prisma.noAuthUser.findMany({
+                                where: { userSessionNumber: sessionForKiosk },
+                                orderBy: { createdAt: "desc" },
+                                take: 1,
+                                select: {
+                                    razorpayPaymentId: true,
+                                    paymentStatus: true,
+                                    paymentAmount: true,
+                                },
+                            });
+
+                            const record = records[0];
+                            if (record?.razorpayPaymentId && record.paymentStatus === "success") {
+                                console.log(`\n🔄 [Auto-Refund] printed-status failed for session ${sessionForKiosk}. Initiating refund...`);
+
+                                const refund = await initiateRefund(
+                                    record.razorpayPaymentId,
+                                    record.paymentAmount ? Math.round(record.paymentAmount * 100) : null,
+                                    { sessionId: sessionForKiosk, reason: "Print failed (printed-status) — automatic refund" }
+                                );
+
+                                await prisma.noAuthUser.updateMany({
+                                    where: { userSessionNumber: sessionForKiosk },
+                                    data: {
+                                        paymentStatus: "refunded",
+                                        refundId: refund.id,
+                                        refundAmount: refund.amount / 100,
+                                        refundStatus: refund.status,
+                                        refundTimestamp: new Date(),
+                                    },
+                                });
+
+                                printJobStatusBySession[sessionForKiosk] = {
+                                    ...printJobStatusBySession[sessionForKiosk],
+                                    refundStatus: "refunded",
+                                    refundId: refund.id,
+                                    refundAmount: refund.amount / 100,
+                                };
+
+                                console.log(`   ✅ Auto-refund successful (printed-status): ${refund.id}`);
+                            }
+                        } catch (refundErr) {
+                            console.error(`   ❌ Auto-refund failed (printed-status) for session ${sessionForKiosk}: ${refundErr.message}`);
+                        }
+                    }
+
                     // Forward to all admins
                     Object.values(adminSockets).forEach(admin => {
                         if (admin.ws && admin.ws.readyState === admin.ws.OPEN) {
@@ -449,8 +581,8 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     }));
 
                     const defaultPrinter = normalizedPrinters.find((p) => p.isDefault);
-                    const selectedBw = bwPrinters.find((p) => p.isDefault) || defaultPrinter || bwPrinters[0] || normalizedPrinters[0];
-                    const selectedColor = colorPrinters.find((p) => p.isDefault) || defaultPrinter || colorPrinters[0] || normalizedPrinters[0];
+                    const selectedBw = bwPrinters.find((p) => p.isDefault) || bwPrinters[0] || defaultPrinter || normalizedPrinters[0];
+                    const selectedColor = colorPrinters.find((p) => p.isDefault) || colorPrinters[0];
 
                     if (selectedBw) {
                         printersUpdate["printers.bw.name"] = selectedBw.name;
@@ -465,7 +597,7 @@ export function handleKioskConnection(ws, kioskId, kioskSockets) {
                     }
 
                     if (Object.keys(printersUpdate).length > 0) {
-                        Kiosk.findOneAndUpdate({ kioskId }, { $set: printersUpdate }).catch(err => console.error(err));
+                        updatePrinterInventory(kioskId, printersUpdate).catch(err => console.error(err));
                     }
 
                     // Forward to all admins with categorized data

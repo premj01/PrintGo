@@ -14,7 +14,7 @@ export function startS3LifecycleCleanupJob() {
             const createdAt = new Date(record.createdAt).getTime();
             const age = uploadedAt ? now - uploadedAt : now - createdAt;
 
-            if (age <= EXPIRE_MS) continue;
+            if (record.status === "printing-sections" || age <= EXPIRE_MS) continue;
 
             try {
                 await deleteObjectByKey(record.fileKey);

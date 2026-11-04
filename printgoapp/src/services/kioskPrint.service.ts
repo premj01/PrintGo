@@ -6,6 +6,8 @@ import type {
     PrintStatusPayload,
     S3UploadUrlResponse,
     DownloadStatusResponse,
+    CreateOrderResponse,
+    VerifyPaymentResponse,
 } from "@/types";
 
 export interface StartPrintPayload {
@@ -74,6 +76,22 @@ export const kioskPrintService = {
             "/userdocs/start-print",
             payload
         );
+        return response.data;
+    },
+
+    // ── Razorpay Payment Methods ──
+
+    async createPaymentOrder(amount: number, fileKey?: string): Promise<CreateOrderResponse> {
+        const response = await api.post<CreateOrderResponse>("/payment/create-order", { amount, fileKey });
+        return response.data;
+    },
+
+    async verifyPayment(paymentData: {
+        razorpay_order_id: string;
+        razorpay_payment_id: string;
+        razorpay_signature: string;
+    }): Promise<VerifyPaymentResponse> {
+        const response = await api.post<VerifyPaymentResponse>("/payment/verify-payment", paymentData);
         return response.data;
     },
 

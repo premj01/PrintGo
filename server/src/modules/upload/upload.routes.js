@@ -1,3 +1,5 @@
+import { sectionStatus } from "../../services/sectionResults.js";
+import { buildSections } from "../../services/printSections.js";
 import express from "express";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
@@ -131,6 +133,7 @@ router.post("/upload-url", requireUserAuth, async (req, res) => {
                 },
             });
 
+            s3UploadRecords[fileKey].recordId = dbRecord.id;
             console.log(`\n✅ [Prisma] NoAuthUser CREATED for session: ${sessionId}`);
             console.log(`   ├─ db id               : ${dbRecord.id}`);
             console.log(`   ├─ sessionNumber        : ${dbRecord.userSessionNumber}`);
@@ -188,6 +191,10 @@ router.post("/upload-complete", requireUserAuth, async (req, res) => {
         return res.status(403).json({ success: false, message: "fileKey does not belong to this session" });
     }
 
+    if (record.status !== "url-issued") {
+        const alreadyUploaded = ["uploaded", "printing", "printing-sections"].includes(record.status);
+        return res.status(alreadyUploaded ? 200 : 409).json({ success: alreadyUploaded, fileKey });
+    }
     const isExpired = Date.now() - new Date(record.createdAt).getTime() > SIGNED_URL_WINDOW_MS;
     if (isExpired) {
         return res.status(400).json({ success: false, message: "Upload URL expired. Request a new URL" });
@@ -200,18 +207,16 @@ router.post("/upload-complete", requireUserAuth, async (req, res) => {
         uploadedAt: new Date().toISOString(),
     };
 
-    const existingPending = pendingS3PrintJobs[sessionId] || {};
     pendingS3PrintJobs[sessionId] = {
-        ...existingPending,
         sessionId,
         kioskId,
         fileKey,
         fileName: record.fileName,
-        printOptions: existingPending.printOptions || null,
-        paymentConfirmed: Boolean(existingPending.paymentConfirmed),
+        printOptions: null,
+        paymentConfirmed: false,
         downloadStatus: "requesting",
-        downloadedFileName: existingPending.downloadedFileName || null,
-        createdAt: existingPending.createdAt || new Date().toISOString(),
+        downloadedFileName: null,
+        createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
     };
 
@@ -253,7 +258,7 @@ router.post("/upload-complete", requireUserAuth, async (req, res) => {
     // ── Prisma: UPDATE record — file uploaded to S3 + kiosk download requested ──
     try {
         const updatedRecord = await prisma.noAuthUser.updateMany({
-            where: { userSessionNumber: sessionId },
+            where: { id: record.recordId, userSessionNumber: sessionId, kioskDownloadStatus: "pending" },
             data: {
                 fileName: record.fileName,
                 s3UploadStatus: "uploaded",
@@ -327,28 +332,30 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
         const fileName = fileRecord.fileName || path.posix.basename(fileKey);
         const existingPending = pendingS3PrintJobs[sessionId] || {};
         
-        let printerToUse = printer || null;
-        try {
-            const kioskSettings = await Kiosk.findOne({ kioskId: kioskId });
-            if (kioskSettings && kioskSettings.printers) {
-                if (colorMode === "color" && kioskSettings.printers.color?.name && kioskSettings.printers.color.name !== "dummy") {
-                    printerToUse = kioskSettings.printers.color.name;
-                } else if ((colorMode === "monochrome" || colorMode === "bw") && kioskSettings.printers.bw?.name && kioskSettings.printers.bw.name !== "dummy") {
-                    printerToUse = kioskSettings.printers.bw.name;
-                } else {
-                    // fallback based on what's available if exact match isn't present
-                    if (kioskSettings.printers.bw?.name && kioskSettings.printers.bw.name !== "dummy") {
-                        printerToUse = kioskSettings.printers.bw.name;
-                    } else if (kioskSettings.printers.color?.name && kioskSettings.printers.color.name !== "dummy") {
-                        printerToUse = kioskSettings.printers.color.name;
-                    }
-                }
+        const printers = (await Kiosk.findOne({ kioskId }))?.printers;
+        const preferred = colorMode === "color" ? printers?.color : printers?.bw;
+        const printerToUse = [preferred, printers?.bw, printers?.color]
+            .find(queue => queue?.name && queue.name !== "dummy")?.name || null;
+        const meta = fileRecord.metadata?.bwPageCount !== undefined ? fileRecord.metadata : printMeta;
+        let sections;
+        let paid;
+        if (meta && Object.keys(meta).length) {
+            try {
+                sections = buildSections(meta, printers);
+            } catch (error) {
+                return res.status(400).json({ success: false, message: error.message });
             }
-        } catch (dbErr) {
-            console.error(`❌ [start-print] Failed to fetch printer settings for kiosk ${kioskId}: ${dbErr.message}`);
+            paid = await prisma.noAuthUser.findFirst({
+                where: { id: fileRecord.recordId, userSessionNumber: sessionId, kioskId, paymentStatus: "success" },
+                orderBy: { createdAt: "desc" },
+            });
+            if (!paid?.razorpayPaymentId || Math.round(paid.paymentAmount * 100) !== sections.reduce((sum, part) => sum + part.amount, 0)) {
+                return res.status(409).json({ success: false, message: "Verified payment must match the selected pages." });
+            }
         }
 
         const mergedPrintOptions = {
+            ...(sections && { sections, batchId: paid.id }),
             copies,
             printer: printerToUse,
             orientation,
@@ -359,8 +366,43 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
             colorMode,
         };
 
+        // ── Prisma: UPDATE record — print config + payment confirmed ──
+        try {
+            const printConfig = {
+                ...(sections && { sections, fileKey, revision: 0 }),
+                copies: copies || 1,
+                printer: printerToUse || null,
+                orientation: orientation || "portrait",
+                paperSize: paperSize || "A4",
+                sides: sides || "one-sided",
+                pageRanges: pageRanges || null,
+                fitToPage: fitToPage !== undefined ? fitToPage : true,
+                colorMode: colorMode || "color",
+            };
+
+            const updatedRecord = await prisma.noAuthUser.updateMany({
+                where: sections ? { id: paid.id, isPrintStarted: false } : { userSessionNumber: sessionId },
+                data: {
+                    fileConfig: printConfig,
+                    ...(sections && { isPrintStarted: true }),
+                    printStatus: "pending",
+                },
+            });
+
+            if (!updatedRecord.count && sections) return res.status(409).json({ success: false, message: "This payment already has a print job." });
+            console.log(`\n✅ [Prisma] NoAuthUser UPDATED (start-print) for session: ${sessionId}`);
+            console.log(`   ├─ matchedCount   : ${updatedRecord.count}`);
+            console.log(`   ├─ fileConfig     :`, JSON.stringify(printConfig));
+            console.log(`   ├─ paymentStatus  : success`);
+            console.log(`   └─ printStatus    : pending`);
+        } catch (dbErr) {
+            if (sections) throw dbErr;
+            console.error(`\n❌ [Prisma] Failed to UPDATE NoAuthUser (start-print) for session: ${sessionId}`);
+            console.error(`   └─ error: ${dbErr.message}`);
+        }
+
         pendingS3PrintJobs[sessionId] = {
-            ...existingPending,
+            ...pendingS3PrintJobs[sessionId],
             sessionId,
             kioskId,
             fileKey,
@@ -373,39 +415,6 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
 
         const pendingJob = pendingS3PrintJobs[sessionId];
         const downloadedFileName = pendingJob.downloadedFileName || fileName;
-
-        // ── Prisma: UPDATE record — print config + payment confirmed ──
-        try {
-            const printConfig = {
-                copies: copies || 1,
-                printer: printerToUse || null,
-                orientation: orientation || "portrait",
-                paperSize: paperSize || "A4",
-                sides: sides || "one-sided",
-                pageRanges: pageRanges || null,
-                fitToPage: fitToPage !== undefined ? fitToPage : true,
-                colorMode: colorMode || "color",
-            };
-
-            const updatedRecord = await prisma.noAuthUser.updateMany({
-                where: { userSessionNumber: sessionId },
-                data: {
-                    fileConfig: printConfig,
-                    paymentStatus: "success",
-                    paymentTimestamp: new Date(),
-                    printStatus: "pending",
-                },
-            });
-
-            console.log(`\n✅ [Prisma] NoAuthUser UPDATED (start-print) for session: ${sessionId}`);
-            console.log(`   ├─ matchedCount   : ${updatedRecord.count}`);
-            console.log(`   ├─ fileConfig     :`, JSON.stringify(printConfig));
-            console.log(`   ├─ paymentStatus  : success`);
-            console.log(`   └─ printStatus    : pending`);
-        } catch (dbErr) {
-            console.error(`\n❌ [Prisma] Failed to UPDATE NoAuthUser (start-print) for session: ${sessionId}`);
-            console.error(`   └─ error: ${dbErr.message}`);
-        }
 
         if (pendingJob.downloadStatus === "success") {
             const dispatched = printFile(kioskId, {
@@ -424,7 +433,7 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
             };
 
             if (dispatched && s3UploadRecords[fileKey]) {
-                s3UploadRecords[fileKey].status = "printing";
+                s3UploadRecords[fileKey].status = sections ? "printing-sections" : "printing";
             }
 
             if (dispatched) {
@@ -434,11 +443,11 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
             // ── Prisma: UPDATE print status after dispatch ──
             try {
                 await prisma.noAuthUser.updateMany({
-                    where: { userSessionNumber: sessionId },
+                    where: { userSessionNumber: sessionId, ...(sections && { id: paid.id }), printStatus: "pending" },
                     data: {
                         printStatus: dispatched ? "printing" : "failed",
                         isPrintStarted: dispatched,
-                        printedAt: dispatched ? new Date() : null,
+                        printedAt: sections ? null : dispatched ? new Date() : null,
                     },
                 });
                 console.log(`   ✅ [Prisma] printStatus → ${dispatched ? "printing" : "failed"}, isPrintStarted → ${dispatched}`);
@@ -526,7 +535,7 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // GET /print-status — Poll current print job status
 // ═══════════════════════════════════════════════════════════════════════════════
-router.get("/print-status", (req, res) => {
+router.get("/print-status", async (req, res) => {
     const tokenFromQuery = req.query.token;
     const tokenHeader = req.headers["authorization"];
     const sessionIdFromHeader = getSessionIdFromAuthHeader(tokenHeader);
@@ -547,7 +556,12 @@ router.get("/print-status", (req, res) => {
     }
 
     const kioskId = userSessionIdWithKioskId[sessionId] || null;
-    const status = printJobStatusBySession[sessionId] || {
+    const current = printJobStatusBySession[sessionId];
+    if (!current || current.sections) {
+        const saved = await prisma.noAuthUser.findFirst({ where: { userSessionNumber: sessionId }, orderBy: { createdAt: "desc" } });
+        if (saved?.fileConfig?.revision > 0) return res.json({ sessionId, ...sectionStatus(saved) });
+    }
+    const status = current || {
         status: "waiting",
         kioskId,
         updatedAt: new Date().toISOString(),
