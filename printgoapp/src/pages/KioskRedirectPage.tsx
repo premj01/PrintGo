@@ -79,11 +79,12 @@ export default function KioskRedirectPage() {
                 }
 
                 setStatusText("Unable to connect. Redirecting...");
+                localStorage.setItem("errormessage" , "Unable to connect. Redirecting..." )
                 window.setTimeout(() => {
                     if (!isCancelled) {
-                        navigate("/", { replace: true });
+                        navigate("/error", { replace: true });
                     }
-                }, 1000);
+                }, 3000);
             } finally {
                 inflightKioskAuthSessions.delete(sessionNumber);
             }
