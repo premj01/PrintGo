@@ -4,4 +4,4 @@ printgoapp/node_modules/
 .env
 server/.env
 server/.env.local
-server/.env.*
+server/.env.*git add .
