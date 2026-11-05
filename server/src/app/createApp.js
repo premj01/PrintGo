@@ -7,7 +7,11 @@ export function createApp() {
     const app = express();
 
     app.use(express.json());
-    app.use(cors(corsOptions));
+    // app.use(cors(corsOptions));
+    app.use(cors({
+        origin: true, // Dynamically reflects the incoming request origin (acts like a wildcard)
+        credentials: true
+    }));
 
     registerRoutes(app);
 
