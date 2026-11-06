@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { STORAGE_KEYS } from "@/config/constants";
 import { ENV } from "@/config";
 import { kioskPrintService } from "@/services";
+import CustomerBill from "@/components/CustomerBill";
+import { useAutomaticPrint } from "@/hooks/useAutomaticPrint";
 import type { MergedPdfMeta, RazorpayCheckoutOptions, RazorpayPaymentResponse, RazorpayInstance } from "@/types";
 import { Loader2, CheckCircle2, AlertCircle, Download, Printer, CreditCard, ShieldCheck } from "lucide-react";
 
@@ -13,7 +15,6 @@ import { get as idbGet } from "idb-keyval";
 // Declare Razorpay on window (loaded via checkout.js in index.html)
 declare global {
     interface Window {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Razorpay: new (options: RazorpayCheckoutOptions) => RazorpayInstance;
     }
 }
@@ -33,7 +34,7 @@ function downloadPhaseLabel(phase: DownloadPhase): string {
         case "downloaded":
             return "File ready on kiosk!";
         case "failed":
-            return "Kiosk download failed. Will retry when you print.";
+            return "Kiosk download failed. Check the print status for next steps.";
         default:
             return "Preparing...";
     }
@@ -42,15 +43,16 @@ function downloadPhaseLabel(phase: DownloadPhase): string {
 export default function PaymentPage() {
     const navigate = useNavigate();
     const [paymentLoading, setPaymentLoading] = useState(false);
-    const [printLoading, setPrintLoading] = useState(false);
     const [preparing, setPreparing] = useState(false);
     const [preparedFileKey, setPreparedFileKey] = useState<string | null>(null);
     const [error, setError] = useState("");
     const [downloadPhase, setDownloadPhase] = useState<DownloadPhase>("idle");
 
-    // Payment state — after payment, show Print button
+    // Payment verification starts printing and opens the receipt dialog independently.
     const [isPaid, setIsPaid] = useState(false);
     const [paymentId, setPaymentId] = useState<string | null>(null);
+    const [alreadyStarted, setAlreadyStarted] = useState(false);
+    const [openBillAfterPayment, setOpenBillAfterPayment] = useState(false);
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const [mergedPdfBlob, setMergedPdfBlob] = useState<Blob | null>(null);
@@ -77,6 +79,8 @@ export default function PaymentPage() {
         }
     }, []);
 
+    const automaticPrint = useAutomaticPrint(isPaid, preparedFileKey, meta, alreadyStarted);
+
     // ── Poll download status from backend ──
     const pollDownloadStatus = useCallback(async () => {
         try {
@@ -88,7 +92,7 @@ export default function PaymentPage() {
                 return true; // stop polling
             } else if (status.kioskDownloadStatus === "failed") {
                 setDownloadPhase("failed");
-                return true; // stop, will retry on print click
+                return true;
             } else if (
                 status.kioskDownloadStatus === "requested" ||
                 status.kioskDownloadStatus === "downloading"
@@ -141,6 +145,11 @@ export default function PaymentPage() {
                         if (statusCheck.s3UploadStatus !== "unknown") {
                             setPreparedFileKey(existingFileKey);
                             setDownloadPhase(statusCheck.isDownloaded ? "downloaded" : "uploaded");
+                            if (["success", "refunded", "partially_refunded"].includes(statusCheck.paymentStatus || "")) {
+                                setAlreadyStarted(statusCheck.isPrintStarted || statusCheck.isPrinted || statusCheck.paymentStatus !== "success");
+                                setPaymentId(statusCheck.paymentId || null);
+                                setIsPaid(true);
+                            }
                             return;
                         }
                     } catch {
@@ -229,7 +238,6 @@ export default function PaymentPage() {
     const bwAmount = meta.bwPageCount * 1;
     const colorAmount = meta.colorPageCount * 4;
     const totalAmount = bwAmount + colorAmount;
-    const isKioskReady = downloadPhase === "downloaded";
 
     // ── Razorpay Payment Flow ──
     const handlePay = async () => {
@@ -262,6 +270,7 @@ export default function PaymentPage() {
                         });
 
                         if (verifyResult.success) {
+                            setOpenBillAfterPayment(true);
                             setIsPaid(true);
                             setPaymentId(verifyResult.paymentId);
                             setError("");
@@ -303,46 +312,6 @@ export default function PaymentPage() {
         }
     };
 
-    const handlePrint = async () => {
-        try {
-            setPrintLoading(true);
-            setError("");
-
-            const uploadedFileKey = preparedFileKey || localStorage.getItem(STORAGE_KEYS.UPLOADED_FILE_NAME);
-
-            if (!uploadedFileKey) {
-                throw new Error("PDF is not prepared yet. Please wait a moment and try again.");
-            }
-
-            if (!isKioskReady) {
-                const latestStatus = await kioskPrintService.checkDownloadStatus();
-                if (!latestStatus.isDownloaded) {
-                    setError("Kiosk is still downloading your file. Please wait a moment and try again.");
-                    setPrintLoading(false);
-                    return;
-                }
-                setDownloadPhase("downloaded");
-            }
-
-            await kioskPrintService.startPrint({
-                fileKey: uploadedFileKey,
-                copies: 1,
-                orientation: "portrait",
-                paperSize: "A4",
-                fitToPage: true,
-                colorMode: "monochrome",
-                printMeta: meta,
-            });
-
-            navigate("/printing");
-        } catch (err) {
-            console.error(err);
-            setError(err instanceof Error ? err.message : "Failed to start printing. Please retry.");
-        } finally {
-            setPrintLoading(false);
-        }
-    };
-
     return (
         <div className="min-h-[calc(100vh-10rem)] bg-gradient-to-br from-surface via-background to-accent/20 p-6">
             <Card className="mx-auto w-full max-w-3xl shadow-xl">
@@ -350,7 +319,7 @@ export default function PaymentPage() {
                     <CardTitle>{isPaid ? "Payment Successful!" : "Complete Payment"}</CardTitle>
                     <CardDescription>
                         {isPaid
-                            ? "Your payment has been processed. You can now print your document."
+                            ? "Your payment is confirmed. Printing starts automatically, and you can email yourself the bill."
                             : "Billing: Rs 1 per B/W page and Rs 4 per Color page"}
                     </CardDescription>
                 </CardHeader>
@@ -429,10 +398,20 @@ export default function PaymentPage() {
                         <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                     )}
 
+                    {isPaid && (
+                        <div role="status" className="rounded-xl border border-border bg-card p-4 text-sm">
+                            {automaticPrint.loading ? <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Starting your print job automatically...</p>
+                                : automaticPrint.requested ? <p>Your print job has been submitted. View print status to follow its progress.</p>
+                                    : automaticPrint.error ? <p>Printing could not start automatically.</p>
+                                    : <p>Preparing to start your print job...</p>}
+                            {automaticPrint.error && <div role="alert" className="mt-2 space-y-2"><p className="text-destructive">{automaticPrint.error}</p><Button variant="outline" onClick={() => void automaticPrint.retry()} disabled={automaticPrint.loading}>Retry printing</Button></div>}
+                        </div>
+                    )}
+
                     <div className="flex flex-wrap gap-3">
-                        <Button variant="outline" onClick={() => navigate("/preview")} disabled={paymentLoading || printLoading}>
+                        {!isPaid && <Button variant="outline" onClick={() => navigate("/preview")} disabled={paymentLoading}>
                             Back To Preview
-                        </Button>
+                        </Button>}
 
                         {!isPaid ? (
                             <Button
@@ -458,32 +437,10 @@ export default function PaymentPage() {
                                 )}
                             </Button>
                         ) : (
-                            <Button
-                                onClick={handlePrint}
-                                disabled={printLoading}
-                                className={`gap-2 ${
-                                    isKioskReady
-                                        ? "bg-gradient-to-r from-success to-accent text-foreground hover:from-accent hover:to-success"
-                                        : ""
-                                }`}
-                            >
-                                {printLoading ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        Starting Print...
-                                    </>
-                                ) : !isKioskReady ? (
-                                    <>
-                                        <Download className="h-4 w-4 animate-pulse" />
-                                        Print (Kiosk Downloading...)
-                                    </>
-                                ) : (
-                                    <>
-                                        <Printer className="h-4 w-4" />
-                                        Start Printing
-                                    </>
-                                )}
-                            </Button>
+                            <>
+                                <CustomerBill initialOpen={openBillAfterPayment} paymentId={paymentId} />
+                                <Button variant="outline" className="gap-2" disabled={automaticPrint.loading} onClick={() => navigate("/printing")}><Printer className="h-4 w-4" />View print status</Button>
+                            </>
                         )}
                     </div>
                 </CardContent>

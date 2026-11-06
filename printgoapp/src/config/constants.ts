@@ -17,4 +17,5 @@ export const STORAGE_KEYS = {
     MERGED_PDF_BASE64: "printgo_merged_pdf_base64",
     MERGED_PDF_META: "printgo_merged_pdf_meta",
     UPLOADED_FILE_NAME: "printgo_uploaded_file_name",
+    BILL_EMAIL: "printgo_bill_email",
 } as const;

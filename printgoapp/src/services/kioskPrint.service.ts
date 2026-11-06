@@ -100,12 +100,16 @@ export const kioskPrintService = {
         return response.data;
     },
 
+    async sendCustomerBill(payload: { email: string; sessionId: string; paymentId?: string }): Promise<{ success: boolean; message: string }> {
+        const response = await api.post<{ success: boolean; message: string }>("/bill-e-customer", payload);
+        return response.data;
+    },
+
     createPrintStatusStream(
         token: string,
         onMessage: (payload: PrintStatusPayload) => void,
         onError?: (error: Error) => void
     ): { close: () => void } {
-        let intervalId: ReturnType<typeof setInterval> | undefined;
         let isClosed = false;
 
         const pollStatus = async () => {
@@ -129,7 +133,7 @@ export const kioskPrintService = {
         void pollStatus();
 
         // Poll every 5 seconds
-        intervalId = setInterval(() => void pollStatus(), 5000);
+        const intervalId = setInterval(() => void pollStatus(), 5000);
 
         return {
             close: () => {

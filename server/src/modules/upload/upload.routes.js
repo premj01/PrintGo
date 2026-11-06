@@ -369,6 +369,7 @@ router.post("/start-print", requireUserAuth, async (req, res) => {
         // ── Prisma: UPDATE record — print config + payment confirmed ──
         try {
             const printConfig = {
+                ...(paid?.fileConfig?.billing && { billing: paid.fileConfig.billing }),
                 ...(sections && { sections, fileKey, revision: 0 }),
                 copies: copies || 1,
                 printer: printerToUse || null,
@@ -595,6 +596,7 @@ router.get("/download-status", requireUserAuth, async (req, res) => {
                 isPrintStarted: true,
                 isPrinted: true,
                 paymentStatus: true,
+                razorpayPaymentId: true,
                 updatedAt: true,
             },
         });
@@ -629,6 +631,7 @@ router.get("/download-status", requireUserAuth, async (req, res) => {
             isPrintStarted: record.isPrintStarted,
             isPrinted: record.isPrinted,
             paymentStatus: record.paymentStatus,
+            paymentId: record.razorpayPaymentId,
             updatedAt: record.updatedAt,
         });
     } catch (err) {

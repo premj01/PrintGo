@@ -106,6 +106,7 @@ export interface DownloadStatusResponse {
     isPrintStarted: boolean;
     isPrinted: boolean;
     paymentStatus?: string;
+    paymentId?: string | null;
     updatedAt?: string;
 }
 

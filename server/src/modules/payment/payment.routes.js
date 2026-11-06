@@ -7,6 +7,7 @@
  */
 
 import { buildSections } from "../../services/printSections.js";
+import { createBillingSnapshot } from "../../services/customerBill.js";
 import express from "express";
 import { requireUserAuth } from "../../middleware/userAuth.middleware.js";
 import {
@@ -74,6 +75,9 @@ router.post("/create-order", requireUserAuth, async (req, res) => {
                 paymentAmount: amount,
                 paymentMethod: "Razorpay",
                 paymentStatus: "order_created",
+                ...(file?.metadata?.bwPageCount !== undefined && {
+                    fileConfig: { ...upload.fileConfig, billing: createBillingSnapshot(file.metadata) },
+                }),
             },
         });
 

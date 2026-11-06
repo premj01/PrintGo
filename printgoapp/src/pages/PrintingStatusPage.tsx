@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { STORAGE_KEYS } from "@/config/constants";
 import { kioskPrintService } from "@/services";
+import CustomerBill from "@/components/CustomerBill";
 import type { PrintStatusPayload } from "@/types";
 
 function formatStatus(status?: string): string {
@@ -68,7 +69,7 @@ export default function PrintingStatusPage() {
                 <CardHeader>
                     <CardTitle>Print status</CardTitle>
                     <CardDescription>
-                        Live kiosk updates are fetched every 5 seconds via REST polling.
+                        Follow your print job here. You can email yourself the bill while printing continues.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -122,7 +123,8 @@ export default function PrintingStatusPage() {
                         ))}
                     </div>
 
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
+                        <CustomerBill />
                         <Button variant="outline" onClick={() => navigate("/")}>Go Home</Button>
                         <Button onClick={() => navigate("/upload")}>Start New Job</Button>
                     </div>

@@ -4,6 +4,7 @@ import userRoutes from "../modules/user/user.routes.js";
 import uploadRoutes from "../modules/upload/upload.routes.js";
 import systemRoutes from "../modules/system/system.routes.js";
 import paymentRoutes from "../modules/payment/payment.routes.js";
+import billingRoutes from "../modules/billing/billing.routes.js";
 
 export function registerRoutes(app) {
     app.use("/userdocs", uploadRoutes);
@@ -11,6 +12,7 @@ export function registerRoutes(app) {
     app.use("/auth", authRoutes);
     app.use("/admin", adminRoutes);
     app.use("/payment", paymentRoutes);
+    app.use("/", billingRoutes);
     app.use("/", userRoutes);
     app.use("/", systemRoutes);
 }
